@@ -8,7 +8,7 @@ Built on the same pattern as `timely-mcp`: a single self-contained
 `api/index.ts` (the Vercel serverless function) that runs over **Streamable HTTP
 on Vercel** (bearer + OAuth 2.1 PKCE) or over **stdio** locally.
 
-**Live endpoint:** `https://bo-mcp.vercel.app/api/index` (POST, Bearer auth).
+**Live endpoint:** `https://bo-mcp.vercel.app/mcp` (POST, Bearer auth). Verified: `GET /health` → `{"status":"ok"}`.
 
 ## Auth
 
@@ -38,7 +38,7 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 
 ```bash
 npm install
-npm run build
+npm run compile
 cp .env.example .env   # fill UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD
 node --env-file=.env scripts/test-login.mjs 99054120   # live smoke test
 ```
@@ -63,14 +63,17 @@ Claude Desktop config:
 ## Deploy (Vercel)
 
 Connected to GitHub (`naranmunkh/bo-mcp`) — every push to `main` auto-deploys.
-`vercel.json` declares `builds: api/index.ts` (the timely-mcp pattern), so Vercel
-builds the function and serves it at `/api/index` with no extra routing.
+Zero-config: `api/index.ts` is auto-built as a serverless function, and
+`vercel.json` `rewrites` send every path (`/mcp`, `/health`, `/.well-known/*`) to
+it. There is intentionally **no `build` script** — a `build` script makes Vercel
+expect a static `public/` output and the deploy fails. Local TypeScript build is
+`npm run compile`.
 
 Required env vars on the Vercel project: `UBCAB_BO_USERNAME`, `UBCAB_BO_PASSWORD`,
 and `UBCAB_BO_MCP_AUTH_TOKEN` (`openssl rand -hex 32`).
 
 Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>` at
-`https://bo-mcp.vercel.app/api/index`. The endpoint **fails closed** if
+`https://bo-mcp.vercel.app/mcp`. The endpoint **fails closed** if
 `UBCAB_BO_MCP_AUTH_TOKEN` is unset.
 
 ## Extending
