@@ -4,8 +4,8 @@
   "description": "MCP server for the UBCab Backoffice (registration-bo) API. Keycloak SSO auth, driver search / detail / rating / state.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "compile": "tsc",
+    "start": "node dist/api/index.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "test:login": "node scripts/test-login.mjs"
