@@ -4,9 +4,11 @@ MCP server for the **UBCab Backoffice** (`registration-bo`) API — the same bac
 that powers `operator.ubcab.mn`. Lets Claude search drivers, read driver detail
 and rating, change driver state, and list service options.
 
-Built on the same pattern as `artlab-mcp` / `timely-mcp`: a single self-contained
-`src/index.ts` that runs over **Streamable HTTP on Vercel** (bearer + OAuth 2.1 PKCE)
-or over **stdio** locally.
+Built on the same pattern as `timely-mcp`: a single self-contained
+`api/index.ts` (the Vercel serverless function) that runs over **Streamable HTTP
+on Vercel** (bearer + OAuth 2.1 PKCE) or over **stdio** locally.
+
+**Live endpoint:** `https://bo-mcp.vercel.app/api/index` (POST, Bearer auth).
 
 ## Auth
 
@@ -48,7 +50,7 @@ Claude Desktop config:
   "mcpServers": {
     "ubcab-bo": {
       "command": "node",
-      "args": ["/abs/path/to/ubcab-bo-mcp/dist/index.js"],
+      "args": ["/abs/path/to/ubcab-bo-mcp/dist/api/index.js"],
       "env": {
         "UBCAB_BO_USERNAME": "...",
         "UBCAB_BO_PASSWORD": "..."
@@ -60,17 +62,18 @@ Claude Desktop config:
 
 ## Deploy (Vercel)
 
-1. `vercel` → link the project.
-2. Set env vars: `UBCAB_BO_USERNAME`, `UBCAB_BO_PASSWORD`, and
-   `UBCAB_BO_MCP_AUTH_TOKEN` (`openssl rand -hex 32`).
-3. Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>`
-   at `https://<deployment>/mcp`.
+Connected to GitHub (`naranmunkh/bo-mcp`) — every push to `main` auto-deploys.
+`vercel.json` declares `builds: api/index.ts` (the timely-mcp pattern), so Vercel
+builds the function and serves it at `/api/index` with no extra routing.
 
-The `/mcp` endpoint **fails closed** if `UBCAB_BO_MCP_AUTH_TOKEN` is unset.
+Required env vars on the Vercel project: `UBCAB_BO_USERNAME`, `UBCAB_BO_PASSWORD`,
+and `UBCAB_BO_MCP_AUTH_TOKEN` (`openssl rand -hex 32`).
+
+Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>` at
+`https://bo-mcp.vercel.app/api/index`. The endpoint **fails closed** if
+`UBCAB_BO_MCP_AUTH_TOKEN` is unset.
 
 ## Extending
 
 Add a new endpoint by registering another tool inside `createMcpServer()` in
-`src/index.ts` — copy one of the existing `reg(...)` blocks. Known related
-endpoints not yet wired up: none outstanding (driver search / detail / rating /
-state / service-options are covered).
+`api/index.ts` — copy one of the existing `reg(...)` blocks.
