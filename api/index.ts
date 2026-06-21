@@ -520,6 +520,44 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // =========================================================================
+  // Rider activity / trip history — POST /v1/activity/api/riders/{id}/history
+  // =========================================================================
+  reg(
+    "ubcab_bo_rider_history",
+    "Хэрэглэгчийн (зорчигчийн) аяллын (activity) түүх. POST /v1/activity/api/riders/{riderId}/history. " +
+      "driver_history-тэй ИЖИЛ бүтэц (зам нь riders). ⚠ POST, page+limit (number) ЗААВАЛ — дутуу бол 400/996. " +
+      "phone өгвөл filter.phone-оор (жолоочийн утас) ШҮҮНЭ — тухайн хэрэглэгчийн уг жолоочтой хийсэн " +
+      "аяллуудыг олно. Хариу: { success, data: { page, totalPage, limit, docs[] } }. docs бичлэг бүр: " +
+      "_id, serviceId, serviceType, createdAt, data{ status, driver{name, phone…}, rider… }. " +
+      "📌 docs[].serviceId = аяллын ID → ubcab_bo_trip_get/_charges/_routes-д ашиглана. " +
+      "Гинж: rider_search → rider_history(phone) → trip_get(serviceId).",
+    {
+      riderId: z
+        .string()
+        .min(1)
+        .describe("Хэрэглэгчийн ID (Mongo ObjectId). rider_search-аас _id-г ав."),
+      phone: z
+        .string()
+        .optional()
+        .describe("Жолоочийн утас — өгвөл filter.phone-оор шүүнэ. Хоосон бол бүх түүх."),
+      page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
+    },
+    ({ riderId, phone, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request("POST", `/v1/activity/api/riders/${encodeURIComponent(riderId)}/history`, {
+          body: {
+            page: page ?? 1,
+            limit: limit ?? 20,
+            includeTotal: includeTotal ?? true,
+            ...(phone ? { filter: { phone } } : {}),
+          },
+        })
+      )
+  );
+
   return server;
 }
 
