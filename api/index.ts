@@ -463,20 +463,32 @@ function createMcpServer(): McpServer {
   reg(
     "ubcab_bo_driver_history",
     "Жолоочийн үйлчилгээний (activity) түүх. POST /v1/activity/api/drivers/{driverId}/history. " +
-      "⚠ POST бөгөөд page, limit ХОЁУЛАА (number) ЗААВАЛ body-д явна — дутуу бол 400 (code 996). " +
-      "Хариу: { success, data: { page, totalPage, limit, docs[] } }. docs бичлэг бүр: " +
+      "⚠ POST бөгөөд page, limit (number) ЗААВАЛ body-д явна — дутуу бол 400 (code 996). " +
+      "phone өгвөл filter.phone-оор (зорчигчийн утас) ШҮҮНЭ — тухайн жолоочийн уг хэрэглэгчтэй хийсэн " +
+      "аяллуудыг олно. Хариу: { success, data: { page, totalPage, limit, docs[] } }. docs бичлэг бүр: " +
       "_id, accountId, sourceApp, serviceId, serviceType, createdAt, data{ type, status, serviceName, " +
       "driver{name, phone, vehicle{plateNumber, mark, model, color…}} …}. " +
-      "Утсаар шүүлт хийхгүй (client тал дээр) — бүх түүхийг хуудаслаж авна.",
+      "📌 docs[].serviceId = тухайн аяллын ID → ubcab_bo_trip_get/_charges/_routes-д ашиглаж " +
+      "аяллын бүрэн дэлгэрэнгүйг авна. Гинж: driver_search → driver_history(phone) → trip_get(serviceId).",
     {
       driverId: driverIdSchema,
+      phone: z
+        .string()
+        .optional()
+        .describe("Зорчигчийн утас — өгвөл filter.phone-оор шүүнэ (ж: \"95186337\"). Хоосон бол бүх түүх."),
       page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
       limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
     },
-    ({ driverId, page, limit }) =>
+    ({ driverId, phone, page, limit, includeTotal }) =>
       guarded(() =>
         client.request("POST", `/v1/activity/api/drivers/${encodeURIComponent(driverId)}/history`, {
-          body: { page: page ?? 1, limit: limit ?? 20 },
+          body: {
+            page: page ?? 1,
+            limit: limit ?? 20,
+            includeTotal: includeTotal ?? true,
+            ...(phone ? { filter: { phone } } : {}),
+          },
         })
       )
   );
