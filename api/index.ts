@@ -558,6 +558,85 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // =========================================================================
+  // Driver wallet / vehicles / feedback / loyalty
+  // =========================================================================
+  const pagingShape = {
+    page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
+    limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
+    includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
+  };
+  const pagingBody = (a: { page?: number; limit?: number; includeTotal?: boolean }) => ({
+    page: a.page ?? 1,
+    limit: a.limit ?? 20,
+    includeTotal: a.includeTotal ?? true,
+  });
+
+  // --- wallet balance (GET) ---
+  reg(
+    "ubcab_bo_driver_wallet",
+    "Жолоочийн хэтэвчний үлдэгдэл. GET /v1/driver/drivers/{driverId}/wallet.",
+    { driverId: driverIdSchema },
+    ({ driverId }) =>
+      guarded(() => client.request("GET", `/v1/driver/drivers/${encodeURIComponent(driverId)}/wallet`))
+  );
+
+  // --- wallet transaction history (POST, paged) ---
+  reg(
+    "ubcab_bo_driver_wallet_history",
+    "Жолоочийн хэтэвчний гүйлгээний түүх. POST /v1/driver/drivers/{driverId}/wallet/history. " +
+      "Body: page, limit, includeTotal. Хариу: { success, data: { page, totalPage, limit, docs[] } }.",
+    { driverId: driverIdSchema, ...pagingShape },
+    ({ driverId, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request("POST", `/v1/driver/drivers/${encodeURIComponent(driverId)}/wallet/history`, {
+          body: pagingBody({ page, limit, includeTotal }),
+        })
+      )
+  );
+
+  // --- vehicles list (GET) ---
+  reg(
+    "ubcab_bo_driver_vehicles",
+    "Жолоочийн тээврийн хэрэгслүүдийн жагсаалт. GET /v1/driver/drivers/{driverId}/vehicles/list. " +
+      "Машин бүрийн plateNumber, mark, model, color, type г.м.",
+    { driverId: driverIdSchema },
+    ({ driverId }) =>
+      guarded(() =>
+        client.request("GET", `/v1/driver/drivers/${encodeURIComponent(driverId)}/vehicles/list`)
+      )
+  );
+
+  // --- feedback / rating list (POST, paged) ---
+  reg(
+    "ubcab_bo_driver_feedback",
+    "Жолоочид өгсөн сэтгэгдэл/үнэлгээний жагсаалт. POST /v1/driver/rating/{driverId}/list. " +
+      "Body: page, limit, includeTotal. (Дундаж үнэлгээ нь ubcab_bo_driver_rating-д.)",
+    { driverId: driverIdSchema, ...pagingShape },
+    ({ driverId, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request("POST", `/v1/driver/rating/${encodeURIComponent(driverId)}/list`, {
+          body: pagingBody({ page, limit, includeTotal }),
+        })
+      )
+  );
+
+  // --- loyalty level history (POST, paged) ---
+  reg(
+    "ubcab_bo_driver_loyalty_history",
+    "Жолоочийн цол (loyalty level)-ны өөрчлөлтийн түүх. " +
+      "POST /v1/loyalty/driver/drivers/{driverId}/level-history/list. Body: page, limit, includeTotal.",
+    { driverId: driverIdSchema, ...pagingShape },
+    ({ driverId, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request(
+          "POST",
+          `/v1/loyalty/driver/drivers/${encodeURIComponent(driverId)}/level-history/list`,
+          { body: pagingBody({ page, limit, includeTotal }) }
+        )
+      )
+  );
+
   return server;
 }
 
