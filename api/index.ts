@@ -287,6 +287,11 @@ const driverIdSchema = z
   .min(1)
   .describe("Жолоочийн ID (Mongo ObjectId, ж: 641021242019b355fdda8686). driver_search-аас _id-г ав.");
 
+const tripIdSchema = z
+  .string()
+  .min(1)
+  .describe("Аяллын ID (Mongo ObjectId, ж: 6a36a0a734b3fd628db888c6). trip_get хариуны _id.");
+
 function createMcpServer(): McpServer {
   const server = new McpServer({ name: "ubcab-bo-mcp", version: "1.0.0" });
   const client = getClient();
@@ -380,6 +385,76 @@ function createMcpServer(): McpServer {
     "Үйлчилгээний сонголтын жагсаалт (select-options). GET /v1/driver/select-options/services.",
     {},
     () => guarded(() => client.request("GET", "/v1/driver/select-options/services"))
+  );
+
+  // =========================================================================
+  // TRIPS — GET /v1/taxi/api/trips/{tripId}[/...]
+  // =========================================================================
+  const tripBase = "/v1/taxi/api/trips";
+
+  // --- main trip detail ---
+  reg(
+    "ubcab_bo_trip_get",
+    "Аяллын ҮНДСЭН бүх мэдээлэл. GET /v1/taxi/api/trips/{tripId}. " +
+      "Хариуны data-д: trackingNumber, region/subRegion, service/variation, status, " +
+      "pickup/dropoff/finalDropoff, rider, driver, serviceProjection, fee, charge, metrics, " +
+      "tariff, config, billingConfig, invoices, timeline, history, route, riderLoyalty, rate, " +
+      "fraud, createdAt/By, updatedAt/By г.м. ⚠ Жолооч/зорчигчийн хувийн мэдээлэл агуулж болзошгүй.",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}`))
+  );
+
+  // --- routes (GPS path) ---
+  reg(
+    "ubcab_bo_trip_routes",
+    "Аяллын маршрут (GPS зам). GET /v1/taxi/api/trips/{tripId}/routes. Хариу: { type, routes }.",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/routes`))
+  );
+
+  // --- invoices ---
+  reg(
+    "ubcab_bo_trip_invoices",
+    "Аяллын нэхэмжлэл. GET /v1/taxi/api/trips/{tripId}/invoices. " +
+      "Массив: invoiceNumber, paymentType, status, paidAmount, totalAmount, payments…",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/invoices`))
+  );
+
+  // --- charges (price breakdown) ---
+  reg(
+    "ubcab_bo_trip_charges",
+    "Аяллын төлбөр тооцооны задаргаа. GET /v1/taxi/api/trips/{tripId}/charges. " +
+      "Хариу: { charges, serviceProjection, fee, total }.",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/charges`))
+  );
+
+  // --- complaints ---
+  reg(
+    "ubcab_bo_trip_complaints",
+    "Аялалтай холбоотой гомдол. GET /v1/taxi/api/trips/{tripId}/complaints. " +
+      "Массив: ticketStatus, ticketType, description, recordings…",
+    { tripId: tripIdSchema },
+    ({ tripId }) =>
+      guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/complaints`))
+  );
+
+  // --- penalties ---
+  reg(
+    "ubcab_bo_trip_penalties",
+    "Аялалтай холбоотой торгууль. GET /v1/taxi/api/trips/{tripId}/penalties. (Ихэвчлэн хоосон массив.)",
+    { tripId: tripIdSchema },
+    ({ tripId }) =>
+      guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/penalties`))
+  );
+
+  // --- loyalty ---
+  reg(
+    "ubcab_bo_trip_loyalty",
+    "Аяллын урамшуулал. GET /v1/taxi/api/trips/{tripId}/loyalty. Хариу: { loyalty }.",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/loyalty`))
   );
 
   return server;

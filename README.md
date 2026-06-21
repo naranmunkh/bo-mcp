@@ -31,8 +31,15 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_driver_rating` | `GET /v1/driver/rating/{driverId}` | Жолоочийн үнэлгээ |
 | `ubcab_bo_driver_set_state` | `PUT /v1/driver/drivers/{driverId}/state` | Төлөв солих: `normal` / `suspended` (reason ≥10 тэмдэгт) |
 | `ubcab_bo_service_options` | `GET /v1/driver/select-options/services` | Үйлчилгээний сонголтын жагсаалт |
+| `ubcab_bo_trip_get` | `GET /v1/taxi/api/trips/{id}` | Аяллын үндсэн бүх мэдээлэл |
+| `ubcab_bo_trip_routes` | `GET …/{id}/routes` | Маршрут (GPS зам) |
+| `ubcab_bo_trip_invoices` | `GET …/{id}/invoices` | Нэхэмжлэл |
+| `ubcab_bo_trip_charges` | `GET …/{id}/charges` | Төлбөр тооцооны задаргаа |
+| `ubcab_bo_trip_complaints` | `GET …/{id}/complaints` | Гомдол |
+| `ubcab_bo_trip_penalties` | `GET …/{id}/penalties` | Торгууль |
+| `ubcab_bo_trip_loyalty` | `GET …/{id}/loyalty` | Урамшуулал |
 
-> ⚠ `driver_get` returns PII (name, phone, register no, civil ID). `driver_set_state` is a write action.
+> ⚠ `driver_get` / `trip_get` return PII (name, phone, register no, civil ID). `driver_set_state` is a write action.
 
 ## Local run (stdio)
 
