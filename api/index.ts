@@ -481,6 +481,33 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // =========================================================================
+  // Rider search — POST /v1/rider/riders/list
+  // =========================================================================
+  reg(
+    "ubcab_bo_rider_search",
+    "Хэрэглэгч (rider/зорчигч)-ийг утас/нэр зэрэг чөлөөт хайлтаар хайх. " +
+      "POST /v1/rider/riders/list (driver_search-тэй ижил бүтэц). Хариунд хэрэглэгчдийн жагсаалт " +
+      "ба тус бүрийн _id ирнэ. ⚠ Хувийн мэдээлэл агуулна.",
+    {
+      query: z.string().min(1).describe("Хайх утга — утасны дугаар, нэр г.м."),
+      page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
+    },
+    ({ query, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request("POST", "/v1/rider/riders/list", {
+          body: {
+            limit: limit ?? 20,
+            includeTotal: includeTotal ?? true,
+            page: page ?? 1,
+            filter: { query },
+          },
+        })
+      )
+  );
+
   return server;
 }
 
