@@ -581,16 +581,38 @@ function createMcpServer(): McpServer {
       guarded(() => client.request("GET", `/v1/driver/drivers/${encodeURIComponent(driverId)}/wallet`))
   );
 
-  // --- wallet transaction history (POST, paged) ---
+  // --- wallet transaction history (POST, paged, date-filterable) ---
+  const dateSchema = z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD форматтай байх ёстой");
   reg(
     "ubcab_bo_driver_wallet_history",
     "Жолоочийн хэтэвчний гүйлгээний түүх. POST /v1/driver/drivers/{driverId}/wallet/history. " +
-      "Body: page, limit, includeTotal. Хариу: { success, data: { page, totalPage, limit, docs[] } }.",
-    { driverId: driverIdSchema, ...pagingShape },
-    ({ driverId, page, limit, includeTotal }) =>
+      "Body: page, limit, includeTotal, заавал биш filter{beginDate,endDate}. " +
+      "beginDate/endDate (YYYY-MM-DD) өгвөл тухайн хугацааны гүйлгээг шүүнэ — " +
+      "сарын орлого/зарлагыг тооцоход ашигла (ж: 2026-07-01 → 2026-07-31). " +
+      "Бүх гүйлгээ авахын тулд limit-ийг том (ж: 100) болго. " +
+      "Хариу: { success, data: { page, totalPage, limit, docs[] } }; docs бүр дүн/чиглэл (орлого/зарлага), огноо агуулна.",
+    {
+      driverId: driverIdSchema,
+      beginDate: dateSchema.optional().describe("Эхлэх огноо YYYY-MM-DD (filter.beginDate)."),
+      endDate: dateSchema.optional().describe("Дуусах огноо YYYY-MM-DD (filter.endDate)."),
+      ...pagingShape,
+    },
+    ({ driverId, beginDate, endDate, page, limit, includeTotal }) =>
       guarded(() =>
         client.request("POST", `/v1/driver/drivers/${encodeURIComponent(driverId)}/wallet/history`, {
-          body: pagingBody({ page, limit, includeTotal }),
+          body: {
+            ...pagingBody({ page, limit, includeTotal }),
+            ...(beginDate || endDate
+              ? {
+                  filter: {
+                    ...(beginDate ? { beginDate } : {}),
+                    ...(endDate ? { endDate } : {}),
+                  },
+                }
+              : {}),
+          },
         })
       )
   );
