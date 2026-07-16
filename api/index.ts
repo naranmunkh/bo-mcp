@@ -440,13 +440,36 @@ function createMcpServer(): McpServer {
       guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/complaints`))
   );
 
-  // --- penalties ---
+  // --- penalties (list) ---
   reg(
     "ubcab_bo_trip_penalties",
     "Аялалтай холбоотой торгууль. GET /v1/taxi/api/trips/{tripId}/penalties. (Ихэвчлэн хоосон массив.)",
     { tripId: tripIdSchema },
     ({ tripId }) =>
       guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/penalties`))
+  );
+
+  // --- penalty cancel (POST) ---
+  reg(
+    "ubcab_bo_trip_penalty_cancel",
+    "Аяллын торгуулийг ЦУЦЛАХ. POST /v1/taxi/api/trips/{tripId}/penalties (body-д шалтгаан). " +
+      "Амжилттай бол торгуулийн төлөв 'Цуцлагдсан' болно. " +
+      "⚠ БИЧИХ/ӨӨРЧЛӨХ үйлдэл — болгоомжтой ашигла. Backend талбарын нэр тодорхой бус тул анхдагчаар " +
+      "{ reason } илгээнэ; шаардвал body-г бүрэн дарж бичихийн тулд payload ашигла.",
+    {
+      tripId: tripIdSchema,
+      reason: z.string().min(1).describe("Цуцлах шалтгаан (ж: \"Хэрэглэгчийн хүсэлтээр\")."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: request body-г бүрэн дарж бичих объект (өгвөл reason-ийг орлоно)."),
+    },
+    ({ tripId, reason, payload }) =>
+      guarded(() =>
+        client.request("POST", `${tripBase}/${encodeURIComponent(tripId)}/penalties`, {
+          body: payload ?? { reason },
+        })
+      )
   );
 
   // --- loyalty ---
