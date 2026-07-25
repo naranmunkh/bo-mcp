@@ -250,6 +250,29 @@ function getClient(): UBCabBOClient {
   return cachedClient;
 }
 
+// UBExpress operator API — SAME Keycloak realm (ubcab-bo) but client_id "express-bo",
+// different API host (operator-api.ubcabexpress.mn). Needs its own operator account.
+const DEFAULT_EXPRESS_API_URL = "https://operator-api.ubcabexpress.mn";
+const DEFAULT_EXPRESS_CLIENT_ID = "express-bo";
+const DEFAULT_EXPRESS_ORIGIN = "https://office.ubcabexpress.mn";
+
+let cachedExpressClient: UBCabBOClient | null = null;
+function getExpressClient(): UBCabBOClient {
+  if (!cachedExpressClient) {
+    cachedExpressClient = new UBCabBOClient({
+      username: process.env.UBCAB_EXPRESS_USERNAME ?? "",
+      password: process.env.UBCAB_EXPRESS_PASSWORD ?? "",
+      refreshToken: process.env.UBCAB_EXPRESS_REFRESH_TOKEN ?? "",
+      clientId: process.env.UBCAB_EXPRESS_CLIENT_ID ?? DEFAULT_EXPRESS_CLIENT_ID,
+      ssoUrl: process.env.UBCAB_EXPRESS_SSO_URL ?? DEFAULT_SSO_URL,
+      realm: process.env.UBCAB_EXPRESS_REALM ?? DEFAULT_REALM,
+      apiUrl: process.env.UBCAB_EXPRESS_API_URL ?? DEFAULT_EXPRESS_API_URL,
+      origin: process.env.UBCAB_EXPRESS_ORIGIN ?? DEFAULT_EXPRESS_ORIGIN,
+    });
+  }
+  return cachedExpressClient;
+}
+
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 function toToolResult(result: BOResult): ToolResult {
@@ -723,6 +746,72 @@ function createMcpServer(): McpServer {
         };
       }
     }
+  );
+
+  // =========================================================================
+  // UBExpress OPERATOR захиалга (ТУСДАА host operator-api.ubcabexpress.mn,
+  // Keycloak realm ubcab-bo / client express-bo — operator дансаар нэвтэрнэ)
+  // Tracking Number-ийг list endpoint-ийн body filter-т дамжуулна.
+  // ⚠ filter талбарын нэр таамаг ("trackingNumber") — шаардвал payload-оор дарж бич.
+  // =========================================================================
+  const expressClient = getExpressClient();
+  const expressListBody = (a: {
+    trackingNumber?: string;
+    page?: number;
+    limit?: number;
+    includeTotal?: boolean;
+    payload?: Record<string, any>;
+  }) =>
+    a.payload ?? {
+      limit: a.limit ?? 20,
+      includeTotal: a.includeTotal ?? true,
+      page: a.page ?? 1,
+      ...(a.trackingNumber ? { filter: { trackingNumber: a.trackingNumber } } : {}),
+    };
+  const expressListShape = {
+    trackingNumber: z
+      .string()
+      .optional()
+      .describe("Хайх tracking код (ж: YC001032554CN). filter.trackingNumber-т дамжина."),
+    page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+    limit: z.number().int().positive().max(100).optional().describe("Мөр (default 20)."),
+    includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+    payload: z
+      .record(z.string(), z.any())
+      .optional()
+      .describe("Заавал биш: request body-г бүрэн дарж бичих (filter талбарын нэр өөр бол ашигла)."),
+  };
+
+  // --- normal orders (Захиалга) ---
+  reg(
+    "ubcab_express_order_search",
+    "UBExpress ЭНГИЙН захиалга (Захиалга)-г tracking кодоор хайх. " +
+      "POST https://operator-api.ubcabexpress.mn/v1/api/address-ready-shipments/list. " +
+      "operator-api (client express-bo, operator данс). Tracking Number-ийг body filter-т дамжуулна; " +
+      "list endpoint нь тухайн захиалгын бүрэн мэдээллийг буцаана (тусдаа get-by-id алга). " +
+      "Олдохгүй бол ubcab_express_return_search-ийг үзэх.",
+    expressListShape,
+    ({ trackingNumber, page, limit, includeTotal, payload }) =>
+      guarded(() =>
+        expressClient.request("POST", "/v1/api/address-ready-shipments/list", {
+          body: expressListBody({ trackingNumber, page, limit, includeTotal, payload }),
+        })
+      )
+  );
+
+  // --- return orders (Буцах захиалга) ---
+  reg(
+    "ubcab_express_return_search",
+    "UBExpress БУЦАХ захиалга (Буцах захиалга)-г tracking кодоор хайх. " +
+      "POST https://operator-api.ubcabexpress.mn/v1/api/ready-return-shipments/list. " +
+      "Энгийн захиалгаас олдоогүй үед энд хай. Бусад нь ubcab_express_order_search-тэй ижил.",
+    expressListShape,
+    ({ trackingNumber, page, limit, includeTotal, payload }) =>
+      guarded(() =>
+        expressClient.request("POST", "/v1/api/ready-return-shipments/list", {
+          body: expressListBody({ trackingNumber, page, limit, includeTotal, payload }),
+        })
+      )
   );
 
   return server;
