@@ -682,6 +682,49 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // =========================================================================
+  // Express (TEMU / чиглэлийн) илгээмж хянах — ӨӨР host, нэвтрэлтгүй нийтийн API
+  // GET https://express-tracking.ubcabtech.com/v1/trackings/{trackingNumber}
+  // =========================================================================
+  reg(
+    "ubcab_express_track",
+    "TEMU / чиглэлийн (express) илгээмжийг tracking кодоор хянах. " +
+      "GET https://express-tracking.ubcabtech.com/v1/trackings/{trackingNumber}?level=debug. " +
+      "⚠ Энэ нь BO биш ТУСДАА нийтийн API — Keycloak нэвтрэлт ШААРДАХГҮЙ. " +
+      "Хариу: data{ origin{country,city}, originTrackingNumber, destination{country,city}, status, " +
+      "subStatus, trackingEvents[]{ status, subStatus, description, createdAt, location{country,city} } }.",
+    {
+      trackingNumber: z.string().min(1).describe("Илгээмжийн tracking код (ж: YC001032554CN)."),
+      level: z.string().optional().describe("Дэлгэрэнгүйн түвшин (default \"debug\")."),
+    },
+    async ({ trackingNumber, level }) => {
+      try {
+        const url =
+          `https://express-tracking.ubcabtech.com/v1/trackings/${encodeURIComponent(trackingNumber)}` +
+          `?level=${encodeURIComponent(level ?? "debug")}`;
+        const res = await fetch(url, { headers: { Accept: "application/json" } });
+        const body = await safeJson(res);
+        if (!res.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Express tracking error (HTTP ${res.status})\n${JSON.stringify(body, null, 2)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return { content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   return server;
 }
 

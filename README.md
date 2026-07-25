@@ -47,6 +47,7 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_trip_penalties` | `GET …/{id}/penalties` | Торгууль (жагсаалт) |
 | `ubcab_bo_trip_penalty_cancel` | `POST …/{id}/penalties` | ⚠ Торгууль цуцлах (write) |
 | `ubcab_bo_trip_loyalty` | `GET …/{id}/loyalty` | Урамшуулал |
+| `ubcab_express_track` | `GET express-tracking.ubcabtech.com/v1/trackings/{code}` | TEMU/чиглэлийн илгээмж хянах (нэвтрэлтгүй нийтийн API) |
 
 > ⚠ `driver_get` / `trip_get` return PII (name, phone, register no, civil ID). `driver_set_state` is a write action.
 
