@@ -50,6 +50,12 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_express_track` | `GET express-tracking.ubcabtech.com/v1/trackings/{code}` | TEMU/чиглэлийн илгээмж хянах (нэвтрэлтгүй нийтийн API) |
 | `ubcab_express_order_search` | `POST operator-api.ubcabexpress.mn/v1/api/address-ready-shipments/list` | UBExpress энгийн захиалга хайх (operator, client express-bo) |
 | `ubcab_express_return_search` | `POST operator-api.ubcabexpress.mn/v1/api/ready-return-shipments/list` | UBExpress буцах захиалга хайх |
+| `ubeats_order_search` | `POST ubeats-bo-api…/v1/api/orders/list` | UBEats Cloud Kitchen захиалга хайх (filter.customerPhone) |
+| `ubeats_order_get` | `GET …/v1/api/orders/{id}` | Cloud Kitchen захиалгын бүрэн дэлгэрэнгүй |
+| `ubeats_order_state_histories` | `GET …/v1/api/orders/{id}/state-histories` | Cloud Kitchen төлөвийн түүх |
+| `ubeats_merchant_order_search` | `POST …/v1/api/merchant-orders/list` | UBEats Merchant захиалга хайх |
+| `ubeats_merchant_order_get` | `GET …/v1/api/merchant-orders/{id}` | Merchant захиалгын бүрэн дэлгэрэнгүй |
+| `ubeats_merchant_order_state_histories` | `GET …/v1/api/merchant-orders/{id}/state-histories` | Merchant төлөвийн түүх |
 
 > ⚠ `driver_get` / `trip_get` return PII (name, phone, register no, civil ID). `driver_set_state` is a write action.
 

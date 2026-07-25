@@ -273,6 +273,29 @@ function getExpressClient(): UBCabBOClient {
   return cachedExpressClient;
 }
 
+// UBEats backoffice API — again its own host. Same Keycloak realm (ubcab-bo);
+// client id / origin are overridable because they differ per BO app.
+const DEFAULT_UBEATS_API_URL = "https://ubeats-bo-api.ubcabtech.com";
+const DEFAULT_UBEATS_CLIENT_ID = "ubeats-bo";
+const DEFAULT_UBEATS_ORIGIN = "https://ubeats-bo.ubcab.mn";
+
+let cachedUbeatsClient: UBCabBOClient | null = null;
+function getUbeatsClient(): UBCabBOClient {
+  if (!cachedUbeatsClient) {
+    cachedUbeatsClient = new UBCabBOClient({
+      username: process.env.UBEATS_USERNAME ?? "",
+      password: process.env.UBEATS_PASSWORD ?? "",
+      refreshToken: process.env.UBEATS_REFRESH_TOKEN ?? "",
+      clientId: process.env.UBEATS_CLIENT_ID ?? DEFAULT_UBEATS_CLIENT_ID,
+      ssoUrl: process.env.UBEATS_SSO_URL ?? DEFAULT_SSO_URL,
+      realm: process.env.UBEATS_REALM ?? DEFAULT_REALM,
+      apiUrl: process.env.UBEATS_API_URL ?? DEFAULT_UBEATS_API_URL,
+      origin: process.env.UBEATS_ORIGIN ?? DEFAULT_UBEATS_ORIGIN,
+    });
+  }
+  return cachedUbeatsClient;
+}
+
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 function toToolResult(result: BOResult): ToolResult {
@@ -796,6 +819,114 @@ function createMcpServer(): McpServer {
         expressClient.request("POST", "/v1/api/address-ready-shipments/list", {
           body: expressListBody({ trackingNumber, page, limit, includeTotal, payload }),
         })
+      )
+  );
+
+  // =========================================================================
+  // UBEATS backoffice (ТУСДАА host ubeats-bo-api.ubcabtech.com)
+  // Урсгал: {orders|merchant-orders}/list (filter.customerPhone) → id →
+  //         GET {orders|merchant-orders}/{id} [+ /state-histories]
+  // =========================================================================
+  const ubeats = getUbeatsClient();
+  const ubeatsBase = "/v1/api";
+  const orderIdSchema = z
+    .string()
+    .min(1)
+    .describe("Захиалгын id (ж: 6a64472576915713b9d0f3fc) — list хариунаас ав.");
+  const ubeatsListShape = {
+    customerPhone: z
+      .string()
+      .optional()
+      .describe("Хэрэглэгчийн утас — filter.customerPhone-д дамжина (ж: \"88221080\")."),
+    page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+    limit: z.number().int().positive().max(100).optional().describe("Мөр (default 20)."),
+    includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+    payload: z
+      .record(z.string(), z.any())
+      .optional()
+      .describe("Заавал биш: request body-г бүрэн дарж бичих (filter бүтэц өөр бол ашигла)."),
+  };
+  const ubeatsListBody = (a: {
+    customerPhone?: string;
+    page?: number;
+    limit?: number;
+    includeTotal?: boolean;
+    payload?: Record<string, any>;
+  }) =>
+    a.payload ?? {
+      limit: a.limit ?? 20,
+      includeTotal: a.includeTotal ?? true,
+      page: a.page ?? 1,
+      ...(a.customerPhone ? { filter: { customerPhone: a.customerPhone } } : {}),
+    };
+
+  // --- Cloud Kitchen orders ---
+  reg(
+    "ubeats_order_search",
+    "UBEats CLOUD KITCHEN захиалгуудыг хэрэглэгчийн утсаар хайх. POST /v1/api/orders/list " +
+      "(host ubeats-bo-api.ubcabtech.com). filter.customerPhone-оор шүүнэ. " +
+      "Хариуны мөр бүрт захиалгын id → ubeats_order_get-д ашиглана. " +
+      "📌 Merchant талыг ubeats_merchant_order_search-ээр ТУСАД НЬ хайх шаардлагатай.",
+    ubeatsListShape,
+    (a) => guarded(() => ubeats.request("POST", `${ubeatsBase}/orders/list`, { body: ubeatsListBody(a) }))
+  );
+
+  reg(
+    "ubeats_order_get",
+    "UBEats Cloud Kitchen захиалгын БҮРЭН дэлгэрэнгүй. GET /v1/api/orders/{orderId}. " +
+      "Захиалгын дугаар, суваг, хэрэглэгчийн нэр/утас, цэсний төрөл, хүргэх хаяг (хот, давхар, тоот, " +
+      "орцны код), урьдчилсан захиалга/цаг, хүргэлтийн ажилтан+утас, зам, ачих/буулгах/хүргэлтийн код, " +
+      "төлөв, халбага-сэрээ, хүлээн авах цаг, хүргэлтийн үнэ, хөнгөлөлт, өртөг, нийт төлбөр, төлбөрийн " +
+      "төлөв, үүссэн огноо; НЭМЭЛТ: захиалсан бүтээгдэхүүний жагсаалт (нэр, тоо, нэгж/нийт үнэ) ба " +
+      "ибаримт (төрөл, дугаар, имэйл). ⚠ Хувийн мэдээлэл агуулна.",
+    { orderId: orderIdSchema },
+    ({ orderId }) =>
+      guarded(() => ubeats.request("GET", `${ubeatsBase}/orders/${encodeURIComponent(orderId)}`))
+  );
+
+  reg(
+    "ubeats_order_state_histories",
+    "UBEats Cloud Kitchen захиалгын төлөвийн түүх. GET /v1/api/orders/{orderId}/state-histories.",
+    { orderId: orderIdSchema },
+    ({ orderId }) =>
+      guarded(() =>
+        ubeats.request("GET", `${ubeatsBase}/orders/${encodeURIComponent(orderId)}/state-histories`)
+      )
+  );
+
+  // --- Merchant orders ---
+  reg(
+    "ubeats_merchant_order_search",
+    "UBEats MERCHANT захиалгуудыг хэрэглэгчийн утсаар хайх. POST /v1/api/merchant-orders/list. " +
+      "filter.customerPhone-оор шүүнэ; мөр бүрт id → ubeats_merchant_order_get. " +
+      "📌 Cloud Kitchen талыг ubeats_order_search-ээр тусад нь хай (хоёуланг шалгах нь зөв).",
+    ubeatsListShape,
+    (a) =>
+      guarded(() =>
+        ubeats.request("POST", `${ubeatsBase}/merchant-orders/list`, { body: ubeatsListBody(a) })
+      )
+  );
+
+  reg(
+    "ubeats_merchant_order_get",
+    "UBEats Merchant захиалгын БҮРЭН дэлгэрэнгүй. GET /v1/api/merchant-orders/{orderId}. " +
+      "Cloud Kitchen-тэй ижил талбарууд (хэрэглэгч, хаяг, хүргэлт, төлбөр, төлөв г.м.); " +
+      "бүтээгдэхүүн нь жагсаалтын мөрөнд, устгах үйлдэл байхгүй. ⚠ Хувийн мэдээлэл агуулна.",
+    { orderId: orderIdSchema },
+    ({ orderId }) =>
+      guarded(() => ubeats.request("GET", `${ubeatsBase}/merchant-orders/${encodeURIComponent(orderId)}`))
+  );
+
+  reg(
+    "ubeats_merchant_order_state_histories",
+    "UBEats Merchant захиалгын төлөвийн түүх. GET /v1/api/merchant-orders/{orderId}/state-histories.",
+    { orderId: orderIdSchema },
+    ({ orderId }) =>
+      guarded(() =>
+        ubeats.request(
+          "GET",
+          `${ubeatsBase}/merchant-orders/${encodeURIComponent(orderId)}/state-histories`
+        )
       )
   );
 
