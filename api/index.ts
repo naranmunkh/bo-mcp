@@ -349,6 +349,18 @@ function createMcpServer(): McpServer {
     handler: (args: any) => Promise<ToolResult>
   ) => server.tool(name, description, shape, handler);
 
+  // Reusable paging fragments (POST list endpoints share this body shape).
+  const pagingShape = {
+    page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
+    limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
+    includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
+  };
+  const pagingBody = (a: { page?: number; limit?: number; includeTotal?: boolean }) => ({
+    page: a.page ?? 1,
+    limit: a.limit ?? 20,
+    includeTotal: a.includeTotal ?? true,
+  });
+
   // -------------------------------------------------------------------------
   // Driver search — POST /v1/driver/drivers/list
   // -------------------------------------------------------------------------
@@ -431,6 +443,48 @@ function createMcpServer(): McpServer {
     "Үйлчилгээний сонголтын жагсаалт (select-options). GET /v1/driver/select-options/services.",
     {},
     () => guarded(() => client.request("GET", "/v1/driver/select-options/services"))
+  );
+
+  // =========================================================================
+  // Тээврийн хэрэгслийн ҮЗЛЭГ — /v1/driver/vehicle-inspections/{inspectionId}
+  // =========================================================================
+  const inspectionIdSchema = z
+    .string()
+    .min(1)
+    .describe("Үзлэгийн ID (Mongo ObjectId, ж: 6a6ad1330cf415b7e77fef74).");
+
+  reg(
+    "ubcab_bo_vehicle_inspection_get",
+    "Тээврийн хэрэгслийн техникийн ҮЗЛЭГИЙН дэлгэрэнгүй. " +
+      "GET /v1/driver/vehicle-inspections/{inspectionId}. Хариу: source (ж: autosync), inspectedAt, " +
+      "expiresAt (дуусах хугацаа), vehicle{plateNumber, cabinNumber, model}, company{name} (үзлэг хийсэн " +
+      "газар), result ('passed'/…), meta.status (ж: APPROVED), createdAt/By, updatedAt/By, ба " +
+      "inspections[] — хэсэг тус бүр (type '1'=гадна/кабин, '2'=явах анги/хөдөлгүүр) values[]{question, " +
+      "answer, description}. 📌 answer='default' нь 'Шаардлага хангасан' гэсэн утга (ялангуяа " +
+      "autosync-webhook-оор автоматаар бүртгэгдсэн үзлэгт).",
+    { inspectionId: inspectionIdSchema },
+    ({ inspectionId }) =>
+      guarded(() =>
+        client.request("GET", `/v1/driver/vehicle-inspections/${encodeURIComponent(inspectionId)}`)
+      )
+  );
+
+  reg(
+    "ubcab_bo_vehicle_inspection_drivers",
+    "Тухайн үзлэгт хамаарах ЖОЛООЧДЫН жагсаалт. " +
+      "POST /v1/driver/vehicle-inspections/{inspectionId}/drivers/list. Body: page, limit, includeTotal. " +
+      "Хариу: data{ docs[]{_id, shortId, state, serviceStatus, profile{name, phone, registerNumber, " +
+      "civilId, birthDate, avatar…}, createdAt, updatedAt}, page, limit, total, totalPage }. " +
+      "docs[]._id → driver_get/driver_history-д ашиглана. ⚠ Хувийн мэдээлэл агуулна.",
+    { inspectionId: inspectionIdSchema, ...pagingShape },
+    ({ inspectionId, page, limit, includeTotal }) =>
+      guarded(() =>
+        client.request(
+          "POST",
+          `/v1/driver/vehicle-inspections/${encodeURIComponent(inspectionId)}/drivers/list`,
+          { body: pagingBody({ page, limit, includeTotal }) }
+        )
+      )
   );
 
   // =========================================================================
@@ -630,16 +684,6 @@ function createMcpServer(): McpServer {
   // =========================================================================
   // Driver wallet / vehicles / feedback / loyalty
   // =========================================================================
-  const pagingShape = {
-    page: z.number().int().positive().optional().describe("Хуудасны дугаар (default 1)."),
-    limit: z.number().int().positive().max(100).optional().describe("Нэг хуудасны мөр (default 20)."),
-    includeTotal: z.boolean().optional().describe("Нийт тоог буцаах эсэх (default true)."),
-  };
-  const pagingBody = (a: { page?: number; limit?: number; includeTotal?: boolean }) => ({
-    page: a.page ?? 1,
-    limit: a.limit ?? 20,
-    includeTotal: a.includeTotal ?? true,
-  });
 
   // --- wallet balance (GET) ---
   reg(

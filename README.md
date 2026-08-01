@@ -37,6 +37,8 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_driver_vehicles` | `GET /v1/driver/drivers/{id}/vehicles/list` | Тээврийн хэрэгслүүд |
 | `ubcab_bo_driver_feedback` | `POST /v1/driver/rating/{id}/list` | Сэтгэгдэл/үнэлгээний жагсаалт (paged) |
 | `ubcab_bo_driver_loyalty_history` | `POST /v1/loyalty/driver/drivers/{id}/level-history/list` | Цолны түүх (paged) |
+| `ubcab_bo_vehicle_inspection_get` | `GET /v1/driver/vehicle-inspections/{id}` | Техникийн үзлэгийн дэлгэрэнгүй (асуулт бүрийн хариу, result, expiresAt) |
+| `ubcab_bo_vehicle_inspection_drivers` | `POST /v1/driver/vehicle-inspections/{id}/drivers/list` | Үзлэгт хамаарах жолоочид (paged) |
 | `ubcab_bo_rider_search` | `POST /v1/rider/riders/list` | Хэрэглэгч (rider) хайх (body: filter.query) |
 | `ubcab_bo_rider_history` | `POST /v1/activity/api/riders/{id}/history` | Хэрэглэгчийн аяллын түүх; `phone` өгвөл жолоочийн утсаар шүүнэ; `docs[].serviceId` → trip_get |
 | `ubcab_bo_trip_get` | `GET /v1/taxi/api/trips/{id}` | Аяллын үндсэн бүх мэдээлэл |
