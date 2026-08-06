@@ -742,6 +742,39 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // --- vehicle services update (PUT) ---
+  reg(
+    "ubcab_bo_driver_vehicle_services_update",
+    "Тээврийн хэрэгслийн ҮЙЛЧИЛГЭЭНҮҮДИЙГ нэмэх/хасах. " +
+      "PUT /v1/driver/drivers/{driverId}/vehicles/update. Body: { approvedServices: [...] }. " +
+      "⚠⚠ ЗАМЫН ДҮРЭМ: Энэ нь массивыг БҮХЭЛД НЬ ДАРЖ БИЧДЭГ (replace, delta биш). Тиймээс " +
+      "ЭХЛЭЭД ubcab_bo_driver_get (эсвэл _driver_vehicles)-ээр одоогийн approvedServices-ийг УНШ, " +
+      "дараа нь тэр жагсаалтад код нэмж/хасаад БҮТЭН жагсаалтыг илгээ. Дутуу илгээвэл үйлчилгээ " +
+      "санамсаргүй хаагдана. " +
+      "Кодын жишээ: just_cab, sos_taxi, official_taxi, vip_taxi, xl_taxi, delivery_express, " +
+      "ubeats_delivery, flash_delivery, call_driver, rent_car, rent_suv, rent_suv_plus, rent_xl " +
+      "(бүрэн сонголтыг ubcab_bo_service_options-оос ав). " +
+      "⚠ БИЧИХ/ӨӨРЧЛӨХ үйлдэл — хэрэглэгчийн тодорхой зөвшөөрөлгүйгээр дуудаж болохгүй. " +
+      "Тэмдэглэл: JS бандлд /driver/drivers/{id}/service/update гэсэн ӨӨР endpoint байдаг ч " +
+      "тээврийн хэрэгслийн үйлчилгээг удирддаг зөв нь ЭНЭ (vehicles/update).",
+    {
+      driverId: driverIdSchema,
+      approvedServices: z
+        .array(z.string())
+        .describe("Зөвшөөрөх үйлчилгээний кодуудын БҮТЭН жагсаалт (одоогийнх + нэмэлт − хассан)."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: request body-г бүрэн дарж бичих (нэмэлт талбар шаардвал)."),
+    },
+    ({ driverId, approvedServices, payload }) =>
+      guarded(() =>
+        client.request("PUT", `/v1/driver/drivers/${encodeURIComponent(driverId)}/vehicles/update`, {
+          body: payload ?? { approvedServices },
+        })
+      )
+  );
+
   // --- feedback / rating list (POST, paged) ---
   reg(
     "ubcab_bo_driver_feedback",

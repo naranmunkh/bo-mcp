@@ -35,6 +35,7 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_driver_wallet` | `GET /v1/driver/drivers/{id}/wallet` | Хэтэвчний үлдэгдэл |
 | `ubcab_bo_driver_wallet_history` | `POST /v1/driver/drivers/{id}/wallet/history` | Хэтэвчний гүйлгээний түүх (paged; `beginDate`/`endDate`-аар шүүж сарын орлого/зарлага) |
 | `ubcab_bo_driver_vehicles` | `GET /v1/driver/drivers/{id}/vehicles/list` | Тээврийн хэрэгслүүд |
+| `ubcab_bo_driver_vehicle_services_update` | `PUT /v1/driver/drivers/{id}/vehicles/update` | ⚠ Машины үйлчилгээ нэмэх/хасах (`approvedServices` бүтнээр дарж бичнэ) |
 | `ubcab_bo_driver_feedback` | `POST /v1/driver/rating/{id}/list` | Сэтгэгдэл/үнэлгээний жагсаалт (paged) |
 | `ubcab_bo_driver_loyalty_history` | `POST /v1/loyalty/driver/drivers/{id}/level-history/list` | Цолны түүх (paged) |
 | `ubcab_bo_vehicle_inspection_get` | `GET /v1/driver/vehicle-inspections/{id}` | Техникийн үзлэгийн дэлгэрэнгүй (асуулт бүрийн хариу, result, expiresAt) |
