@@ -504,6 +504,30 @@ function createMcpServer(): McpServer {
     ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}`))
   );
 
+  // --- DELIVERY trip detail (backlog #18, 2026-08-15) ---
+  //
+  // Delivery trips are invisible through the taxi path: the resolver measured a live
+  // delivery complaint (trip 6a77e342, "70,800₮ гэж мэдэгдсэн") where trip_get returned
+  // 996 "Өгөгдөл олдсонгүй" and the rider was absent from the taxi rider DB — so EVERY
+  // delivery-penalty complaint arrived fact-less and went to a human blind. The BO web
+  // app's own UI path is operator.ubcab.mn/services/delivery/trips/{id}; this mirrors
+  // the parallel API family. Additive tool — nothing existing changes.
+  reg(
+    "ubcab_bo_delivery_trip_get",
+    "ХҮРГЭЛТИЙН аяллын үндсэн мэдээлэл. GET /v1/delivery/api/trips/{tripId}. " +
+      "operator.ubcab.mn/services/delivery/trips/... линктэй аялалд ЭНИЙГ ашиглана " +
+      "(taxi-гийн trip_get нь 996 'Өгөгдөл олдсонгүй' буцаана).",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `/v1/delivery/api/trips/${encodeURIComponent(tripId)}`))
+  );
+
+  reg(
+    "ubcab_bo_delivery_trip_penalties",
+    "ХҮРГЭЛТИЙН аяллын торгууль. GET /v1/delivery/api/trips/{tripId}/penalties.",
+    { tripId: tripIdSchema },
+    ({ tripId }) => guarded(() => client.request("GET", `/v1/delivery/api/trips/${encodeURIComponent(tripId)}/penalties`))
+  );
+
   // --- routes (GPS path) ---
   reg(
     "ubcab_bo_trip_routes",
