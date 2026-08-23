@@ -1210,8 +1210,7 @@ function createMcpServer(): McpServer {
 
   reg(
     "ubcab_marketing_content_category_update",
-    "Мэдээний ангилал ЗАСАХ. PUT /v1/content/api/content/categories " +
-      "(⚠ id нь ЗАМ дээр биш, BODY дотор явна). " +
+    "Мэдээний ангилал ЗАСАХ. PUT /v1/content/api/content/categories/{id}. " +
       "⚠ Бүх талбар дарж бичигдэх тул эхлээд _get эсвэл _list-ээр одоогийн утгыг уншаад дутуугүй илгээ. " +
       "⚠ БИЧИХ үйлдэл.",
     {
@@ -1223,15 +1222,13 @@ function createMcpServer(): McpServer {
       payload: z
         .record(z.string(), z.any())
         .optional()
-        .describe("Заавал биш: body-г бүрэн дарж бичих (id-г өөрөө оруулна)."),
+        .describe("Заавал биш: body-г бүрэн дарж бичих."),
     },
     ({ id, name, order, isActive, extra, payload }) =>
       guarded(() =>
-        marketing.request("PUT", contentCatsBase, {
+        marketing.request("PUT", `${contentCatsBase}/${encodeURIComponent(id)}`, {
           body:
             payload ?? {
-              _id: id,
-              id,
               ...(name !== undefined ? { name } : {}),
               ...(order !== undefined ? { order } : {}),
               ...(isActive !== undefined ? { isActive } : {}),
@@ -1264,6 +1261,164 @@ function createMcpServer(): McpServer {
           query: { action: action ?? "create", resourcesId },
         })
       )
+  );
+
+  // =========================================================================
+  // MARKETING BO — Тусламжийн АГУУЛГА (help contents)
+  // base /v1/content/api/help/contents  (+ select-options)
+  // =========================================================================
+  const helpContentsBase = "/v1/content/api/help/contents";
+  const helpContentIdSchema = z.string().min(1).describe("Контентын id (list-ээс ав).");
+
+  reg(
+    "ubcab_marketing_help_content_list",
+    "Тусламжийн АГУУЛГУУДын жагсаалт. POST /v1/content/api/help/contents/list. " +
+      "Body: limit, page, includeTotal, filter{slug?, title?}. " +
+      "Хариу: data{ docs[]{_id, group, slug, title, languageGroup{mn,en}, language, order, isActive}, " +
+      "page, limit, totalPage }.",
+    {
+      slug: z.string().optional().describe("filter.slug — тодорхой slug-аар шүүх."),
+      title: z.string().optional().describe("filter.title — гарчгаар шүүх."),
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 10)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+    },
+    ({ slug, title, page, limit, includeTotal }) =>
+      guarded(() =>
+        marketing.request("POST", `${helpContentsBase}/list`, {
+          body: {
+            limit: limit ?? 10,
+            page: page ?? 1,
+            includeTotal: includeTotal ?? true,
+            ...(slug || title
+              ? { filter: { ...(slug ? { slug } : {}), ...(title ? { title } : {}) } }
+              : {}),
+          },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_content_create",
+    "Тусламжийн ШИНЭ АГУУЛГА нэмэх. POST /v1/content/api/help/contents. " +
+      "Заавал: group (контент бүлгийн id — ubcab_marketing_help_select_content_groups эсвэл " +
+      "_help_group_list-ээс ав), title, language ('mn'|'en'), order (тоо). " +
+      "content нь HTML (rich-text). " +
+      "📌 slug: ШИНЭ контент бол null; ОРЧУУЛГА нэмэх бол одоо байгаа контентын slug-ийг өг — " +
+      "ингэснээр нэг language group-т холбогдоно (mn/en хос болно). " +
+      "⚠ БИЧИХ үйлдэл — зөвшөөрөлгүй дуудахгүй.",
+    {
+      group: z.string().min(1).describe("Контент бүлгийн id (шаардлагатай)."),
+      title: z.string().min(1).describe("Гарчиг (шаардлагатай)."),
+      language: z.enum(["mn", "en"]).describe("Хэл: mn эсвэл en."),
+      order: z.number().int().nonnegative().describe("Эрэмбэ (тоо, 0-оос эхэлж болно)."),
+      content: z.string().optional().describe("HTML агуулга (ж: \"<p>...</p>\")."),
+      isActive: z.boolean().optional().describe("Идэвхтэй эсэх (default true)."),
+      slug: z
+        .string()
+        .optional()
+        .describe("Орчуулга нэмэх бол одоо байгаа slug; шинэ контент бол хоосон орхи (null явна)."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: request body-г бүрэн дарж бичих."),
+    },
+    ({ group, title, language, order, content, isActive, slug, payload }) =>
+      guarded(() =>
+        marketing.request("POST", helpContentsBase, {
+          body:
+            payload ?? {
+              group,
+              title,
+              language,
+              order,
+              isActive: isActive ?? true,
+              content: content ?? "",
+              slug: slug ?? null,
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_content_get",
+    "Тусламжийн агуулгын дэлгэрэнгүй. GET /v1/content/api/help/contents/{id}.",
+    { id: helpContentIdSchema },
+    ({ id }) => guarded(() => marketing.request("GET", `${helpContentsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_help_content_update",
+    "Тусламжийн агуулга ЗАСАХ. PUT /v1/content/api/help/contents/{id}. " +
+      "⚠ Талбарууд дарж бичигдэх тул эхлээд _get-ээр одоогийн утгыг уншаад дутуугүй илгээ. " +
+      "⚠ БИЧИХ үйлдэл.",
+    {
+      id: helpContentIdSchema,
+      group: z.string().optional().describe("Контент бүлгийн id."),
+      title: z.string().optional().describe("Гарчиг."),
+      language: z.enum(["mn", "en"]).optional().describe("Хэл."),
+      order: z.number().int().nonnegative().optional().describe("Эрэмбэ."),
+      content: z.string().optional().describe("HTML агуулга."),
+      isActive: z.boolean().optional().describe("Идэвхтэй эсэх."),
+      slug: z.string().optional().describe("Slug (language group холбоос)."),
+      payload: z.record(z.string(), z.any()).optional().describe("Body-г бүрэн дарж бичих."),
+    },
+    ({ id, group, title, language, order, content, isActive, slug, payload }) =>
+      guarded(() =>
+        marketing.request("PUT", `${helpContentsBase}/${encodeURIComponent(id)}`, {
+          body:
+            payload ?? {
+              ...(group !== undefined ? { group } : {}),
+              ...(title !== undefined ? { title } : {}),
+              ...(language !== undefined ? { language } : {}),
+              ...(order !== undefined ? { order } : {}),
+              ...(content !== undefined ? { content } : {}),
+              ...(isActive !== undefined ? { isActive } : {}),
+              ...(slug !== undefined ? { slug } : {}),
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_content_delete",
+    "Тусламжийн агуулга УСТГАХ. DELETE /v1/content/api/help/contents/{id}. ⚠ Устгах үйлдэл.",
+    { id: helpContentIdSchema },
+    ({ id }) =>
+      guarded(() => marketing.request("DELETE", `${helpContentsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_help_content_meta",
+    "Тусламжийн агуулгын формын META. GET /v1/content/api/help/contents/meta?action=create " +
+      "эсвэл ?action=get&resourcesId={id}. Талбарууд: group (select), title, language (mn/en), " +
+      "order (number), isActive (checkbox).",
+    {
+      action: z.enum(["create", "get"]).optional().describe("create (default) эсвэл get."),
+      resourcesId: z.string().optional().describe("action='get' үед контентын id."),
+    },
+    ({ action, resourcesId }) =>
+      guarded(() =>
+        marketing.request("GET", `${helpContentsBase}/meta`, {
+          query: { action: action ?? "create", resourcesId },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_select_content_groups",
+    "Контент бүлгийн СОНГОЛТУУД (select options). " +
+      "GET /v1/content/api/help/select-options/content-groups. " +
+      "📌 help_content_create-ийн 'group' утгыг эндээс ав.",
+    {},
+    () => guarded(() => marketing.request("GET", "/v1/content/api/help/select-options/content-groups"))
+  );
+
+  reg(
+    "ubcab_marketing_help_select_language",
+    "Хэлний сонголтууд. GET /v1/content/api/help/select-options/language.",
+    {},
+    () => guarded(() => marketing.request("GET", "/v1/content/api/help/select-options/language"))
   );
 
   // --- return orders (Буцах захиалга) ---

@@ -61,7 +61,15 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_marketing_content_category_list` | `POST …/v1/content/api/content/categories/list` | Мэдээний (Press) ангиллууд |
 | `ubcab_marketing_content_category_create` | `POST …/content/categories` | ⚠ Шинэ мэдээний ангилал |
 | `ubcab_marketing_content_category_get` | `GET …/content/categories/{id}` | Ангилалын дэлгэрэнгүй |
-| `ubcab_marketing_content_category_update` | `PUT …/content/categories` | ⚠ Засах (id нь **body** дотор) |
+| `ubcab_marketing_content_category_update` | `PUT …/content/categories/{id}` | ⚠ Засах |
+| `ubcab_marketing_help_content_list` | `POST …/help/contents/list` | Тусламжийн агуулгууд (filter: slug, title) |
+| `ubcab_marketing_help_content_create` | `POST …/help/contents` | ⚠ Агуулга нэмэх (`slug`=null шинэ / slug=орчуулга) |
+| `ubcab_marketing_help_content_get` | `GET …/help/contents/{id}` | Агуулгын дэлгэрэнгүй |
+| `ubcab_marketing_help_content_update` | `PUT …/help/contents/{id}` | ⚠ Агуулга засах |
+| `ubcab_marketing_help_content_delete` | `DELETE …/help/contents/{id}` | ⚠ Агуулга устгах |
+| `ubcab_marketing_help_content_meta` | `GET …/help/contents/meta` | Формын meta |
+| `ubcab_marketing_help_select_content_groups` | `GET …/help/select-options/content-groups` | Бүлгийн сонголт (`group` утга) |
+| `ubcab_marketing_help_select_language` | `GET …/help/select-options/language` | Хэлний сонголт |
 | `ubcab_marketing_content_category_delete` | `DELETE …/content/categories/{id}` | ⚠ Устгах |
 | `ubcab_marketing_content_category_meta` | `GET …/content/categories/meta` | Формын meta (талбар динамик) |
 | `ubeats_order_search` | `POST ubeats-bo-api…/v1/api/orders/list` | UBEats Cloud Kitchen захиалга хайх (filter.customerPhone) |
