@@ -597,26 +597,59 @@ function createMcpServer(): McpServer {
       guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/penalties`))
   );
 
-  // --- penalty cancel (POST) ---
+  // --- penalty cancel (POST) — ЗӨВ зам нь .../penalties/{penaltyId}/cancel ---
   reg(
     "ubcab_bo_trip_penalty_cancel",
-    "Аяллын торгуулийг ЦУЦЛАХ. POST /v1/taxi/api/trips/{tripId}/penalties (body-д шалтгаан). " +
-      "Амжилттай бол торгуулийн төлөв 'Цуцлагдсан' болно. " +
-      "⚠ БИЧИХ/ӨӨРЧЛӨХ үйлдэл — болгоомжтой ашигла. Backend талбарын нэр тодорхой бус тул анхдагчаар " +
-      "{ reason } илгээнэ; шаардвал body-г бүрэн дарж бичихийн тулд payload ашигла.",
+    "Аяллын тодорхой торгуулийг ЦУЦЛАХ. " +
+      "POST /v1/taxi/api/trips/{tripId}/penalties/{penaltyId}/cancel, body { reason }. " +
+      "Хариу: { success: true, data: { message: 'OK' } }; дараа нь торгуулийн төлөв " +
+      "status='cancelled', type='cancellation' болно (2026-08-23 бодит дуудлагаар баталгаажсан). " +
+      "📌 penaltyId-г ЭХЛЭЭД ubcab_bo_trip_penalties (GET .../penalties)-ээр авна. " +
+      "⚠ БИЧИХ/ӨӨРЧЛӨХ үйлдэл — хэрэглэгчийн тодорхой зөвшөөрөлгүйгээр дуудахгүй.",
     {
       tripId: tripIdSchema,
-      reason: z.string().min(1).describe("Цуцлах шалтгаан (ж: \"Хэрэглэгчийн хүсэлтээр\")."),
+      penaltyId: z
+        .string()
+        .min(1)
+        .describe("Цуцлах торгуулийн id (ubcab_bo_trip_penalties хариунаас)."),
+      reason: z.string().min(1).describe("Цуцлах шалтгаан (ж: \"Хэрэглэгчийн гомдлыг үндэслэн цуцаллаа\")."),
       payload: z
         .record(z.string(), z.any())
         .optional()
-        .describe("Заавал биш: request body-г бүрэн дарж бичих объект (өгвөл reason-ийг орлоно)."),
+        .describe("Заавал биш: request body-г бүрэн дарж бичих (өгвөл reason-ийг орлоно)."),
     },
-    ({ tripId, reason, payload }) =>
+    ({ tripId, penaltyId, reason, payload }) =>
       guarded(() =>
-        client.request("POST", `${tripBase}/${encodeURIComponent(tripId)}/penalties`, {
-          body: payload ?? { reason },
-        })
+        client.request(
+          "POST",
+          `${tripBase}/${encodeURIComponent(tripId)}/penalties/${encodeURIComponent(penaltyId)}/cancel`,
+          { body: payload ?? { reason } }
+        )
+      )
+  );
+
+  // --- delivery penalty cancel (same shape, delivery module) ---
+  reg(
+    "ubcab_bo_delivery_penalty_cancel",
+    "ХҮРГЭЛТИЙН аяллын торгуулийг ЦУЦЛАХ. " +
+      "POST /v1/delivery/api/trips/{tripId}/penalties/{penaltyId}/cancel, body { reason }. " +
+      "Такситай ижил бүтэц (delivery модуль). penaltyId-г ubcab_bo_delivery_trip_penalties-ээс ав. " +
+      "⚠ БИЧИХ үйлдэл — зөвшөөрөлгүй дуудахгүй.",
+    {
+      tripId: tripIdSchema,
+      penaltyId: z.string().min(1).describe("Цуцлах торгуулийн id."),
+      reason: z.string().min(1).describe("Цуцлах шалтгаан."),
+      payload: z.record(z.string(), z.any()).optional().describe("Body-г бүрэн дарж бичих."),
+    },
+    ({ tripId, penaltyId, reason, payload }) =>
+      guarded(() =>
+        client.request(
+          "POST",
+          `/v1/delivery/api/trips/${encodeURIComponent(tripId)}/penalties/${encodeURIComponent(
+            penaltyId
+          )}/cancel`,
+          { body: payload ?? { reason } }
+        )
       )
   );
 

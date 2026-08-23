@@ -48,7 +48,8 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_trip_charges` | `GET …/{id}/charges` | Төлбөр тооцооны задаргаа |
 | `ubcab_bo_trip_complaints` | `GET …/{id}/complaints` | Гомдол |
 | `ubcab_bo_trip_penalties` | `GET …/{id}/penalties` | Торгууль (жагсаалт) |
-| `ubcab_bo_trip_penalty_cancel` | `POST …/{id}/penalties` | ⚠ Торгууль цуцлах (write) |
+| `ubcab_bo_trip_penalty_cancel` | `POST …/trips/{tripId}/penalties/{penaltyId}/cancel` | ⚠ Торгууль цуцлах (write) |
+| `ubcab_bo_delivery_penalty_cancel` | `POST /v1/delivery/api/trips/{tripId}/penalties/{penaltyId}/cancel` | ⚠ Хүргэлтийн торгууль цуцлах |
 | `ubcab_bo_trip_loyalty` | `GET …/{id}/loyalty` | Урамшуулал |
 | `ubcab_express_track` | `GET express-tracking.ubcabtech.com/v1/trackings/{code}` | TEMU/чиглэлийн илгээмж хянах (нэвтрэлтгүй нийтийн API) |
 | `ubcab_express_order_search` | `POST operator-api.ubcabexpress.mn/v1/api/address-ready-shipments/list` | UBExpress энгийн захиалга хайх (operator, client express-bo) |
