@@ -58,6 +58,12 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_marketing_help_group_get` | `GET …/content-groups/{id}` | Категорын дэлгэрэнгүй |
 | `ubcab_marketing_help_group_delete` | `DELETE …/content-groups/{id}` | ⚠ Категор устгах |
 | `ubcab_marketing_help_group_meta` | `GET …/content-groups/meta?action=create\|get` | Формын meta |
+| `ubcab_marketing_content_category_list` | `POST …/v1/content/api/content/categories/list` | Мэдээний (Press) ангиллууд |
+| `ubcab_marketing_content_category_create` | `POST …/content/categories` | ⚠ Шинэ мэдээний ангилал |
+| `ubcab_marketing_content_category_get` | `GET …/content/categories/{id}` | Ангилалын дэлгэрэнгүй |
+| `ubcab_marketing_content_category_update` | `PUT …/content/categories` | ⚠ Засах (id нь **body** дотор) |
+| `ubcab_marketing_content_category_delete` | `DELETE …/content/categories/{id}` | ⚠ Устгах |
+| `ubcab_marketing_content_category_meta` | `GET …/content/categories/meta` | Формын meta (талбар динамик) |
 | `ubeats_order_search` | `POST ubeats-bo-api…/v1/api/orders/list` | UBEats Cloud Kitchen захиалга хайх (filter.customerPhone) |
 | `ubeats_order_get` | `GET …/v1/api/orders/{id}` | Cloud Kitchen захиалгын бүрэн дэлгэрэнгүй |
 | `ubeats_order_state_histories` | `GET …/v1/api/orders/{id}/state-histories` | Cloud Kitchen төлөвийн түүх |

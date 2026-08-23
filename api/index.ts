@@ -1148,6 +1148,124 @@ function createMcpServer(): McpServer {
       )
   );
 
+  // =========================================================================
+  // MARKETING BO — Мэдээний (Press) АНГИЛАЛ /content/api/content/categories
+  // help/content-groups-тай ижил бүтэц; ялгаа: засварыг PUT-ээр (зам дээр id-гүй,
+  // id нь BODY дотор) хийдэг.
+  // =========================================================================
+  const contentCatsBase = "/v1/content/api/content/categories";
+  const contentCatIdSchema = z.string().min(1).describe("Ангилалын id (list-ээс ав).");
+
+  reg(
+    "ubcab_marketing_content_category_list",
+    "Мэдээний (Press) АНГИЛЛУУДын жагсаалт. POST /v1/content/api/content/categories/list. " +
+      "Body: limit, page, includeTotal. Хариу: data{ docs[], page, limit, totalPage }.",
+    {
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 10)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+    },
+    ({ page, limit, includeTotal }) =>
+      guarded(() =>
+        marketing.request("POST", `${contentCatsBase}/list`, {
+          body: { limit: limit ?? 10, page: page ?? 1, includeTotal: includeTotal ?? true },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_category_create",
+    "Мэдээний ШИНЭ АНГИЛАЛ нэмэх. POST /v1/content/api/content/categories. " +
+      "Талбарууд: name* (Нэр), order* (Дараалал, эерэг тоо), isActive, нэмэлтээр 'Онцлох төрөл' г.м. " +
+      "📌 Формын талбар серверийн meta-аас ДИНАМИК тул эргэлзвэл эхлээд " +
+      "ubcab_marketing_content_category_meta(action='create')-г дуудаж яг талбаруудыг шалга, " +
+      "шаардлагатай бол payload-оор бүтэн body илгээ. ⚠ БИЧИХ үйлдэл.",
+    {
+      name: z.string().min(1).describe("Ангилалын нэр (заавал)."),
+      order: z.number().int().positive().describe("Дараалал — эерэг бүхэл тоо (заавал)."),
+      isActive: z.boolean().optional().describe("Идэвхтэй эсэх (default true)."),
+      extra: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Нэмэлт талбарууд (ж: онцлох төрөл) — meta-аас харсны дараа."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: request body-г бүрэн дарж бичих."),
+    },
+    ({ name, order, isActive, extra, payload }) =>
+      guarded(() =>
+        marketing.request("POST", contentCatsBase, {
+          body: payload ?? { name, order, isActive: isActive ?? true, ...(extra ?? {}) },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_category_get",
+    "Мэдээний ангилалын дэлгэрэнгүй. GET /v1/content/api/content/categories/{id}.",
+    { id: contentCatIdSchema },
+    ({ id }) => guarded(() => marketing.request("GET", `${contentCatsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_content_category_update",
+    "Мэдээний ангилал ЗАСАХ. PUT /v1/content/api/content/categories " +
+      "(⚠ id нь ЗАМ дээр биш, BODY дотор явна). " +
+      "⚠ Бүх талбар дарж бичигдэх тул эхлээд _get эсвэл _list-ээр одоогийн утгыг уншаад дутуугүй илгээ. " +
+      "⚠ БИЧИХ үйлдэл.",
+    {
+      id: contentCatIdSchema,
+      name: z.string().optional().describe("Шинэ нэр."),
+      order: z.number().int().positive().optional().describe("Шинэ дараалал."),
+      isActive: z.boolean().optional().describe("Идэвхтэй эсэх."),
+      extra: z.record(z.string(), z.any()).optional().describe("Нэмэлт талбарууд."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: body-г бүрэн дарж бичих (id-г өөрөө оруулна)."),
+    },
+    ({ id, name, order, isActive, extra, payload }) =>
+      guarded(() =>
+        marketing.request("PUT", contentCatsBase, {
+          body:
+            payload ?? {
+              _id: id,
+              id,
+              ...(name !== undefined ? { name } : {}),
+              ...(order !== undefined ? { order } : {}),
+              ...(isActive !== undefined ? { isActive } : {}),
+              ...(extra ?? {}),
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_category_delete",
+    "Мэдээний ангилал УСТГАХ. DELETE /v1/content/api/content/categories/{id}. " +
+      "⚠ Устгах үйлдэл — тухайн ангилалд хамаарах мэдээнд нөлөөлж болзошгүй.",
+    { id: contentCatIdSchema },
+    ({ id }) => guarded(() => marketing.request("DELETE", `${contentCatsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_content_category_meta",
+    "Мэдээний ангилалын формын META. GET /v1/content/api/content/categories/meta" +
+      "?action=create (үүсгэх) эсвэл ?action=get&resourcesId={id} (засварлах). " +
+      "Талбарууд динамик тул create/update-ийн өмнө үүнийг дуудах нь найдвартай.",
+    {
+      action: z.enum(["create", "get"]).optional().describe("create (default) эсвэл get."),
+      resourcesId: z.string().optional().describe("action='get' үед ангилалын id."),
+    },
+    ({ action, resourcesId }) =>
+      guarded(() =>
+        marketing.request("GET", `${contentCatsBase}/meta`, {
+          query: { action: action ?? "create", resourcesId },
+        })
+      )
+  );
+
   // --- return orders (Буцах захиалга) ---
   reg(
     "ubcab_express_return_search",
