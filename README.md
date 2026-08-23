@@ -70,6 +70,14 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_marketing_help_content_meta` | `GET …/help/contents/meta` | Формын meta |
 | `ubcab_marketing_help_select_content_groups` | `GET …/help/select-options/content-groups` | Бүлгийн сонголт (`group` утга) |
 | `ubcab_marketing_help_select_language` | `GET …/help/select-options/language` | Хэлний сонголт |
+| `ubcab_marketing_content_list` | `POST …/content/contents/list` | Press контентууд |
+| `ubcab_marketing_content_create` | `POST …/content/contents` | ⚠ Контент нэмэх (title, cover, category, preview) |
+| `ubcab_marketing_content_get` | `GET …/content/contents/{id}` | Дэлгэрэнгүй |
+| `ubcab_marketing_content_update` | `PUT …/content/contents/{id}` | ⚠ Засах |
+| `ubcab_marketing_content_delete` | `DELETE …/content/contents/{id}` | ⚠ Устгах |
+| `ubcab_marketing_content_meta` | `GET …/content/contents/meta` | Формын meta |
+| `ubcab_marketing_content_select_categories` | `GET …/content/select-options/categories` | Ангиллын сонголт (`category`) |
+| `ubcab_marketing_upload_image` | `POST upload.ubcabtech.com/v2/upload` | Зураг байршуулах → `cover` URL |
 | `ubcab_marketing_content_category_delete` | `DELETE …/content/categories/{id}` | ⚠ Устгах |
 | `ubcab_marketing_content_category_meta` | `GET …/content/categories/meta` | Формын meta (талбар динамик) |
 | `ubeats_order_search` | `POST ubeats-bo-api…/v1/api/orders/list` | UBEats Cloud Kitchen захиалга хайх (filter.customerPhone) |

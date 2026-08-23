@@ -1421,6 +1421,220 @@ function createMcpServer(): McpServer {
     () => guarded(() => marketing.request("GET", "/v1/content/api/help/select-options/language"))
   );
 
+  // =========================================================================
+  // MARKETING BO — Press / маркетингийн КОНТЕНТ /content/api/content/contents
+  // (+ зураг upload: ӨӨР домэйн upload.ubcabtech.com, ижил Bearer токен)
+  // =========================================================================
+  const contentsBase = "/v1/content/api/content/contents";
+  const contentIdSchema = z.string().min(1).describe("Контентын id (list-ээс ав).");
+
+  reg(
+    "ubcab_marketing_content_list",
+    "Press / маркетингийн КОНТЕНТУУДын жагсаалт. POST /v1/content/api/content/contents/list. " +
+      "Body: limit, page, includeTotal. Хариу: data{ docs[], page, limit, totalPage }.",
+    {
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 10)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+      filter: z.record(z.string(), z.any()).optional().describe("Нэмэлт шүүлтүүр (байвал)."),
+    },
+    ({ page, limit, includeTotal, filter }) =>
+      guarded(() =>
+        marketing.request("POST", `${contentsBase}/list`, {
+          body: {
+            limit: limit ?? 10,
+            page: page ?? 1,
+            includeTotal: includeTotal ?? true,
+            ...(filter ? { filter } : {}),
+          },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_create",
+    "Press / маркетингийн ШИНЭ КОНТЕНТ нэмэх. POST /v1/content/api/content/contents. " +
+      "Заавал: title, cover (зургийн URL), category (ангилалын id), preview (тойм). " +
+      "content нь HTML бүтэн агуулга, wordCount нь үгийн тоо (default 200) — эдгээр meta-д " +
+      "харагдахгүй ч API хүлээж авдаг. " +
+      "📌 Дараалал: (1) ubcab_marketing_upload_image-ээр зураг байршуулж fileUrl ав → cover, " +
+      "(2) ubcab_marketing_content_select_categories-ээс category id ав, (3) энэ tool-оор үүсгэ. " +
+      "⚠ БИЧИХ үйлдэл — зөвшөөрөлгүй дуудахгүй.",
+    {
+      title: z.string().min(1).describe("Гарчиг (заавал)."),
+      cover: z.string().min(1).describe("Нүүр зургийн URL (upload-аас буцсан fileUrl)."),
+      category: z.string().min(1).describe("Ангилалын id (select-options-оос)."),
+      preview: z.string().min(1).describe("Тойм агуулга (заавал)."),
+      content: z.string().optional().describe("HTML бүтэн агуулга."),
+      wordCount: z.number().int().nonnegative().optional().describe("Үгийн тоо (default 200)."),
+      isPublished: z.boolean().optional().describe("Нийтлэх эсэх (default true)."),
+      extra: z.record(z.string(), z.any()).optional().describe("Нэмэлт талбарууд (meta-аас)."),
+      payload: z.record(z.string(), z.any()).optional().describe("Body-г бүрэн дарж бичих."),
+    },
+    ({ title, cover, category, preview, content, wordCount, isPublished, extra, payload }) =>
+      guarded(() =>
+        marketing.request("POST", contentsBase, {
+          body:
+            payload ?? {
+              title,
+              cover,
+              category,
+              preview,
+              isPublished: isPublished ?? true,
+              content: content ?? "",
+              wordCount: wordCount ?? 200,
+              ...(extra ?? {}),
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_get",
+    "Press контентын дэлгэрэнгүй. GET /v1/content/api/content/contents/{id}.",
+    { id: contentIdSchema },
+    ({ id }) => guarded(() => marketing.request("GET", `${contentsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_content_update",
+    "Press контент ЗАСАХ. PUT /v1/content/api/content/contents/{id}. " +
+      "⚠ Эхлээд _get-ээр одоогийн утгыг уншаад дутуугүй илгээ. ⚠ БИЧИХ үйлдэл.",
+    {
+      id: contentIdSchema,
+      title: z.string().optional(),
+      cover: z.string().optional().describe("Шинэ зургийн URL."),
+      category: z.string().optional().describe("Ангилалын id."),
+      preview: z.string().optional(),
+      content: z.string().optional().describe("HTML агуулга."),
+      wordCount: z.number().int().nonnegative().optional(),
+      isPublished: z.boolean().optional(),
+      extra: z.record(z.string(), z.any()).optional(),
+      payload: z.record(z.string(), z.any()).optional().describe("Body-г бүрэн дарж бичих."),
+    },
+    ({ id, title, cover, category, preview, content, wordCount, isPublished, extra, payload }) =>
+      guarded(() =>
+        marketing.request("PUT", `${contentsBase}/${encodeURIComponent(id)}`, {
+          body:
+            payload ?? {
+              ...(title !== undefined ? { title } : {}),
+              ...(cover !== undefined ? { cover } : {}),
+              ...(category !== undefined ? { category } : {}),
+              ...(preview !== undefined ? { preview } : {}),
+              ...(content !== undefined ? { content } : {}),
+              ...(wordCount !== undefined ? { wordCount } : {}),
+              ...(isPublished !== undefined ? { isPublished } : {}),
+              ...(extra ?? {}),
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_delete",
+    "Press контент УСТГАХ. DELETE /v1/content/api/content/contents/{id}. ⚠ Устгах үйлдэл.",
+    { id: contentIdSchema },
+    ({ id }) => guarded(() => marketing.request("DELETE", `${contentsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_content_meta",
+    "Press контентын формын META. GET /v1/content/api/content/contents/meta?action=create " +
+      "эсвэл ?action=get&resourcesId={id}. (content, wordCount нь meta-д ГАРАХГҮЙ ч API хүлээж авдаг.)",
+    {
+      action: z.enum(["create", "get"]).optional().describe("create (default) эсвэл get."),
+      resourcesId: z.string().optional().describe("action='get' үед контентын id."),
+    },
+    ({ action, resourcesId }) =>
+      guarded(() =>
+        marketing.request("GET", `${contentsBase}/meta`, {
+          query: { action: action ?? "create", resourcesId },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_content_select_categories",
+    "Press контентын АНГИЛЛЫН сонголтууд. GET /v1/content/api/content/select-options/categories. " +
+      "📌 content_create-ийн 'category' утгыг эндээс ав.",
+    {},
+    () =>
+      guarded(() => marketing.request("GET", "/v1/content/api/content/select-options/categories"))
+  );
+
+  // --- image upload (ӨӨР домэйн: upload.ubcabtech.com) ---
+  reg(
+    "ubcab_marketing_upload_image",
+    "Зураг/файл БАЙРШУУЛАХ (cover зурагт). " +
+      "POST https://upload.ubcabtech.com/v2/upload?useFileName=false&folderPath=...&prefix=... " +
+      "(multipart, field нэр 'files'; Bearer токен нь marketing-тэй ижил). " +
+      "Хариу: result[0].fileUrl (эсвэл .url) → үүнийг content_create-ийн 'cover'-т тавина. " +
+      "Файлыг base64-ээр дамжуулна.",
+    {
+      filename: z.string().min(1).describe("Файлын нэр (ж: cover.jpg)."),
+      fileBase64: z.string().min(1).describe("Файлын агуулга base64 хэлбэрээр."),
+      mimeType: z.string().optional().describe("MIME төрөл (ж: image/jpeg)."),
+      folderPath: z.string().optional().describe("Хадгалах хавтас (default 'contents')."),
+      prefix: z.string().optional().describe("Нэрийн угтвар (default 'contents')."),
+      useFileName: z.boolean().optional().describe("Файлын нэрийг хэвээр ашиглах эсэх (default false)."),
+    },
+    async ({ filename, fileBase64, mimeType, folderPath, prefix, useFileName }) => {
+      try {
+        const token = await marketing.getToken();
+        let bytes: Buffer;
+        try {
+          bytes = Buffer.from(fileBase64, "base64");
+        } catch {
+          throw new BOError("fileBase64 нь буруу base64 байна.");
+        }
+        if (bytes.length === 0) throw new BOError("Файл хоосон байна (fileBase64 шалга).");
+        const base = (process.env.UBCAB_UPLOAD_URL ?? "https://upload.ubcabtech.com").replace(
+          /\/+$/,
+          ""
+        );
+        const url = new URL(`${base}/v2/upload`);
+        url.searchParams.set("useFileName", String(useFileName ?? false));
+        url.searchParams.set("folderPath", folderPath ?? "contents");
+        url.searchParams.set("prefix", prefix ?? "contents");
+        const form = new FormData();
+        form.append(
+          "files",
+          new Blob([new Uint8Array(bytes)], { type: mimeType || "application/octet-stream" }),
+          filename
+        );
+        const origin = (process.env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN).replace(/\/+$/, "");
+        const res = await fetch(url.toString(), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json, text/plain, */*",
+            Origin: origin,
+            Referer: `${origin}/`,
+          },
+          body: form, // Content-Type-г fetch өөрөө boundary-тай тавина
+        });
+        const body = await safeJson(res);
+        if (!res.ok) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Upload error (HTTP ${res.status})\n${JSON.stringify(body, null, 2)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return { content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text" as const, text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // --- return orders (Буцах захиалга) ---
   reg(
     "ubcab_express_return_search",
