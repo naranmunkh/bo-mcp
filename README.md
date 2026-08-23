@@ -53,6 +53,11 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_express_track` | `GET express-tracking.ubcabtech.com/v1/trackings/{code}` | TEMU/чиглэлийн илгээмж хянах (нэвтрэлтгүй нийтийн API) |
 | `ubcab_express_order_search` | `POST operator-api.ubcabexpress.mn/v1/api/address-ready-shipments/list` | UBExpress энгийн захиалга хайх (operator, client express-bo) |
 | `ubcab_express_return_search` | `POST operator-api.ubcabexpress.mn/v1/api/ready-return-shipments/list` | UBExpress буцах захиалга хайх |
+| `ubcab_marketing_help_group_list` | `POST marketing-bo-api…/v1/content/api/help/content-groups/list` | Гарын авлагын категорууд |
+| `ubcab_marketing_help_group_create` | `POST …/content-groups` | ⚠ Шинэ категор нэмэх (name, order) |
+| `ubcab_marketing_help_group_get` | `GET …/content-groups/{id}` | Категорын дэлгэрэнгүй |
+| `ubcab_marketing_help_group_delete` | `DELETE …/content-groups/{id}` | ⚠ Категор устгах |
+| `ubcab_marketing_help_group_meta` | `GET …/content-groups/meta?action=create\|get` | Формын meta |
 | `ubeats_order_search` | `POST ubeats-bo-api…/v1/api/orders/list` | UBEats Cloud Kitchen захиалга хайх (filter.customerPhone) |
 | `ubeats_order_get` | `GET …/v1/api/orders/{id}` | Cloud Kitchen захиалгын бүрэн дэлгэрэнгүй |
 | `ubeats_order_state_histories` | `GET …/v1/api/orders/{id}/state-histories` | Cloud Kitchen төлөвийн түүх |

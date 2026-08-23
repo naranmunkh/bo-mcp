@@ -273,6 +273,30 @@ function getExpressClient(): UBCabBOClient {
   return cachedExpressClient;
 }
 
+// Marketing backoffice API — own host, but the SAME Keycloak realm and (per the
+// BO token's audience list) the same login works. Falls back to UBCAB_BO_* creds
+// so no extra env is needed; override only if marketing needs its own account.
+const DEFAULT_MARKETING_API_URL = "https://marketing-bo-api.ubcabtech.com";
+
+let cachedMarketingClient: UBCabBOClient | null = null;
+function getMarketingClient(): UBCabBOClient {
+  if (!cachedMarketingClient) {
+    cachedMarketingClient = new UBCabBOClient({
+      username: process.env.UBCAB_MARKETING_USERNAME ?? process.env.UBCAB_BO_USERNAME ?? "",
+      password: process.env.UBCAB_MARKETING_PASSWORD ?? process.env.UBCAB_BO_PASSWORD ?? "",
+      refreshToken:
+        process.env.UBCAB_MARKETING_REFRESH_TOKEN ?? process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
+      clientId:
+        process.env.UBCAB_MARKETING_CLIENT_ID ?? process.env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
+      ssoUrl: process.env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
+      realm: process.env.UBCAB_BO_REALM ?? DEFAULT_REALM,
+      apiUrl: process.env.UBCAB_MARKETING_API_URL ?? DEFAULT_MARKETING_API_URL,
+      origin: process.env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
+    });
+  }
+  return cachedMarketingClient;
+}
+
 // UBEats backoffice API — again its own host. Same Keycloak realm (ubcab-bo);
 // client id / origin are overridable because they differ per BO app.
 const DEFAULT_UBEATS_API_URL = "https://ubeats-bo-api.ubcabtech.com";
@@ -1028,6 +1052,99 @@ function createMcpServer(): McpServer {
           "GET",
           `${ubeatsBase}/merchant-orders/${encodeURIComponent(orderId)}/state-histories`
         )
+      )
+  );
+
+  // =========================================================================
+  // MARKETING BO — Гарын авлагын КАТЕГОР (help content-groups)
+  // Host: marketing-bo-api.ubcabtech.com, base /v1/content/api/help/content-groups
+  // Нэвтрэлт: BO-тэй ижил Keycloak данс (нэмэлт env шаардлагагүй).
+  // =========================================================================
+  const marketing = getMarketingClient();
+  const helpGroupsBase = "/v1/content/api/help/content-groups";
+  const helpGroupIdSchema = z.string().min(1).describe("Категорын id (list-ээс ав).");
+
+  reg(
+    "ubcab_marketing_help_group_list",
+    "Гарын авлагын КАТЕГОРУУДын жагсаалт. POST /v1/content/api/help/content-groups/list " +
+      "(host marketing-bo-api.ubcabtech.com). Body: limit, page, includeTotal. " +
+      "Хариу: data{ docs[], page, limit, totalPage }. docs[]._id → get/delete-д ашиглана.",
+    {
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 10)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+    },
+    ({ page, limit, includeTotal }) =>
+      guarded(() =>
+        marketing.request("POST", `${helpGroupsBase}/list`, {
+          body: { limit: limit ?? 10, page: page ?? 1, includeTotal: includeTotal ?? true },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_group_create",
+    "Гарын авлагын ШИНЭ КАТЕГОР нэмэх. POST /v1/content/api/help/content-groups. " +
+      "name (заавал, min 1), order (эерэг тоо — эрэмбэ), localizedNames (заавал биш, key-value " +
+      "орчуулга ж: {\"en\":\"Help\"}), isActive. Хариу: { success: true, ... }. " +
+      "⚠ БИЧИХ үйлдэл — хэрэглэгчийн зөвшөөрөлгүй дуудаж болохгүй. " +
+      "📌 order давхцахгүй байх эсэхийг эхлээд _list-ээр шалгах нь зүйтэй.",
+    {
+      name: z.string().min(1).describe("Категорын нэр (заавал)."),
+      order: z.number().int().positive().describe("Эрэмбэ — эерэг бүхэл тоо."),
+      isActive: z.boolean().optional().describe("Идэвхтэй эсэх (default true)."),
+      localizedNames: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Орчуулгууд, ж: {\"en\":\"Help\"}. Хоосон бол {}."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: request body-г бүрэн дарж бичих."),
+    },
+    ({ name, order, isActive, localizedNames, payload }) =>
+      guarded(() =>
+        marketing.request("POST", helpGroupsBase, {
+          body:
+            payload ?? {
+              name,
+              order,
+              localizedNames: localizedNames ?? {},
+              isActive: isActive ?? true,
+            },
+        })
+      )
+  );
+
+  reg(
+    "ubcab_marketing_help_group_get",
+    "Гарын авлагын категорын дэлгэрэнгүй. GET /v1/content/api/help/content-groups/{id}.",
+    { id: helpGroupIdSchema },
+    ({ id }) => guarded(() => marketing.request("GET", `${helpGroupsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_help_group_delete",
+    "Гарын авлагын категор УСТГАХ. DELETE /v1/content/api/help/content-groups/{id}. " +
+      "⚠ Устгах үйлдэл — доторх контент нөлөөлж болзошгүй. Зөвшөөрөлгүй дуудахгүй.",
+    { id: helpGroupIdSchema },
+    ({ id }) => guarded(() => marketing.request("DELETE", `${helpGroupsBase}/${encodeURIComponent(id)}`))
+  );
+
+  reg(
+    "ubcab_marketing_help_group_meta",
+    "Категорын формын META (ямар талбар шаардлагатайг буцаана). " +
+      "GET /v1/content/api/help/content-groups/meta?action=create (үүсгэх) эсвэл " +
+      "?action=get&resourcesId={id} (засварлах). Body бүтэц эргэлзээтэй үед эхлээд үүнийг дууд.",
+    {
+      action: z.enum(["create", "get"]).optional().describe("create (default) эсвэл get."),
+      resourcesId: z.string().optional().describe("action='get' үед категорын id."),
+    },
+    ({ action, resourcesId }) =>
+      guarded(() =>
+        marketing.request("GET", `${helpGroupsBase}/meta`, {
+          query: { action: action ?? "create", resourcesId },
+        })
       )
   );
 
