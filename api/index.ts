@@ -470,6 +470,48 @@ function createMcpServer(): McpServer {
   );
 
   // =========================================================================
+  // AUDIT LOG — POST /v1/audit-log/list (хэн, хэзээ, юуг өөрчилсөн)
+  // =========================================================================
+  reg(
+    "ubcab_bo_audit_log_list",
+    "AUDIT LOG — объект дээр хийгдсэн үйлдлүүдийн түүх (хэн, хэзээ, юуг өөрчилсөн). " +
+      "POST /v1/audit-log/list. Body: limit, page, includeTotal, target{type,_id}. " +
+      "target нь ШҮҮЛТҮҮР: жолоочийн лог харахад type='driver', _id=жолоочийн id " +
+      "(бусад төрөл: rider, trip г.м. — системээс хамаарна). " +
+      "Хариу docs[] бүрт: createdAt (Огноо), by{type,_id,name} (Гүйцэтгэсэн), action (Үйлдэл, " +
+      "ж: 'driver-state-update'), level (Түвшин: info г.м.), description (Тайлбар), " +
+      "change{before,after} (ЯГ ямар талбар юунаас юу болсон), client{type,code}, origin, " +
+      "context{sourceIp,userAgent}. " +
+      "📌 'Хэн жолоочийг хаасан/сэргээсэн?', 'Хэн юу өөрчилсөн?' гэх мэт асуултад ЭНЭ tool-ыг ашигла.",
+    {
+      targetType: z
+        .string()
+        .min(1)
+        .describe("Объектын төрөл — жолоочийн хувьд 'driver' (мөн rider, trip г.м.)."),
+      targetId: z.string().min(1).describe("Объектын _id (ж: жолоочийн id)."),
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 20)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+      payload: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Заавал биш: body-г бүрэн дарж бичих (нэмэлт шүүлтүүр шаардвал)."),
+    },
+    ({ targetType, targetId, page, limit, includeTotal, payload }) =>
+      guarded(() =>
+        client.request("POST", "/v1/audit-log/list", {
+          body:
+            payload ?? {
+              limit: limit ?? 20,
+              page: page ?? 1,
+              includeTotal: includeTotal ?? true,
+              target: { type: targetType, _id: targetId },
+            },
+        })
+      )
+  );
+
+  // =========================================================================
   // Тээврийн хэрэгслийн ҮЗЛЭГ — /v1/driver/vehicle-inspections/{inspectionId}
   // =========================================================================
   const inspectionIdSchema = z
