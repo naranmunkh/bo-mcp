@@ -709,13 +709,17 @@ function createMcpServer(): McpServer {
   reg(
     "ubcab_bo_driver_history",
     "Жолоочийн үйлчилгээний (activity) түүх. POST /v1/activity/api/drivers/{driverId}/history. " +
-      "⚠ POST бөгөөд page, limit (number) ЗААВАЛ body-д явна — дутуу бол 400 (code 996). " +
-      "phone өгвөл filter.phone-оор (зорчигчийн утас) ШҮҮНЭ — тухайн жолоочийн уг хэрэглэгчтэй хийсэн " +
-      "аяллуудыг олно. Хариу: { success, data: { page, totalPage, limit, docs[] } }. docs бичлэг бүр: " +
-      "_id, accountId, sourceApp, serviceId, serviceType, createdAt, data{ type, status, serviceName, " +
-      "driver{name, phone, vehicle{plateNumber, mark, model, color…}} …}. " +
+      "⚠ Энэ нь /v1/driver/... БИШ, /v1/activity/api/... гэсэн ӨӨР service; мөн GET биш POST. " +
+      "page, limit (number) ЗААВАЛ body-д явна — дутуу бол 400 (code 996). " +
+      "phone өгвөл filter.phone-оор ШҮҮНЭ (UI-ийн 'Утасны дугаар' хайлт энд очно) — тухайн жолоочийн " +
+      "уг зорчигчтой хийсэн аяллуудыг олно; filter заавал биш, хоосон бол бүх түүх. " +
+      "Хариу: { success, data: { page, totalPage, limit, docs[] } }. " +
+      "docs бичлэг бүрт (ШУУД, 'data' бүрхүүлгүй): _id, accountId, sourceApp, serviceId, serviceType, " +
+      "type, status, serviceName, driver{name, avatar, phone}, vehicle{plateNumber, mark, model, icon, " +
+      "color}, code, label, rate, level, rider. " +
       "📌 docs[].serviceId = тухайн аяллын ID → ubcab_bo_trip_get/_charges/_routes-д ашиглаж " +
-      "аяллын бүрэн дэлгэрэнгүйг авна. Гинж: driver_search → driver_history(phone) → trip_get(serviceId).",
+      "аяллын бүрэн дэлгэрэнгүйг (огноо, төлбөр, хаяг) авна. " +
+      "Гинж: driver_search → driver_history(phone) → trip_get(serviceId).",
     {
       driverId: driverIdSchema,
       phone: z
