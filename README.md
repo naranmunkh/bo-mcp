@@ -46,6 +46,9 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 | `ubcab_bo_trip_get` | `GET /v1/taxi/api/trips/{id}` | Аяллын үндсэн бүх мэдээлэл |
 | `ubcab_bo_trip_routes` | `GET …/{id}/routes` | Маршрут (GPS зам) |
 | `ubcab_bo_trip_invoices` | `GET …/{id}/invoices` | Нэхэмжлэл |
+| `ubcab_bo_rider_invoices` | `POST /v1/rider/riders/{id}/invoices` | Хэрэглэгчийн нэхэмжлэхүүд (filter.status, ж: open) |
+| `ubcab_bo_invoice_get` | `GET /v1/billing/api/invoices/{id}` | Нэхэмжлэхийн дэлгэрэнгүй |
+| `ubcab_bo_service_trip_invoices` | `GET /v1/{service}/api/trips/{id}/invoices` (+ delivery requests) | Аль ч үйлчилгээний аяллын нэхэмжлэх |
 | `ubcab_bo_trip_charges` | `GET …/{id}/charges` | Төлбөр тооцооны задаргаа |
 | `ubcab_bo_trip_complaints` | `GET …/{id}/complaints` | Гомдол |
 | `ubcab_bo_trip_penalties` | `GET …/{id}/penalties` | Торгууль (жагсаалт) |

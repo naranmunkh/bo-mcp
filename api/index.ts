@@ -611,6 +611,94 @@ function createMcpServer(): McpServer {
     ({ tripId }) => guarded(() => client.request("GET", `${tripBase}/${encodeURIComponent(tripId)}/invoices`))
   );
 
+  // =========================================================================
+  // НЭХЭМЖЛЭХ (invoices) — хэрэглэгчийн жагсаалт, billing дэлгэрэнгүй, service-ийн аяллын нэхэмжлэх
+  // =========================================================================
+  reg(
+    "ubcab_bo_rider_invoices",
+    "Хэрэглэгчийн НЭХЭМЖЛЭХҮҮДийн жагсаалт (BO 'Нэхэмжлэхүүд' цэс). " +
+      "POST /v1/rider/riders/{riderId}/invoices. Body: limit, page, includeTotal, filter{status?} " +
+      "(ж: status='open' = төлөгдөөгүй). " +
+      "Хариу: data{ docs[], page, totalPage, limit }; docs бүрт invoiceNumber, additional{group, " +
+      "invoiceType}, relatedEntity{type,_id} г.м. " +
+      "📌 relatedEntity.type → аяллын төрөл: taxi_trip, call_driver_trip, delivery_trip, sos_trip, " +
+      "logistic_trip; relatedEntity._id = аяллын id (taxi бол ubcab_bo_trip_get-д шууд ашиглана). " +
+      "Нэхэмжлэхийн дэлгэрэнгүйг ubcab_bo_invoice_get(_id)-ээр ав.",
+    {
+      riderId: z.string().min(1).describe("Хэрэглэгчийн id (rider_search-аас _id)."),
+      status: z
+        .string()
+        .optional()
+        .describe("filter.status — ж: 'open' (төлөгдөөгүй). Хоосон бол бүгд."),
+      page: z.number().int().positive().optional().describe("Хуудас (default 1)."),
+      limit: z.number().int().positive().max(100).optional().describe("Мөр (default 20)."),
+      includeTotal: z.boolean().optional().describe("Нийт тоо (default true)."),
+      filter: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Нэмэлт шүүлтүүр (status-тай нийлүүлэгдэнэ)."),
+    },
+    ({ riderId, status, page, limit, includeTotal, filter }) => {
+      const f = { ...(filter ?? {}), ...(status ? { status } : {}) };
+      return guarded(() =>
+        client.request("POST", `/v1/rider/riders/${encodeURIComponent(riderId)}/invoices`, {
+          body: {
+            limit: limit ?? 20,
+            includeTotal: includeTotal ?? true,
+            page: page ?? 1,
+            ...(Object.keys(f).length ? { filter: f } : {}),
+          },
+        })
+      );
+    }
+  );
+
+  reg(
+    "ubcab_bo_invoice_get",
+    "Нэг НЭХЭМЖЛЭХийн дэлгэрэнгүй (billing service). GET /v1/billing/api/invoices/{invoiceId}. " +
+      "invoiceId-г ubcab_bo_rider_invoices (docs[]._id) эсвэл аяллын invoices-ээс ав.",
+    { invoiceId: z.string().min(1).describe("Нэхэмжлэхийн id.") },
+    ({ invoiceId }) =>
+      guarded(() => client.request("GET", `/v1/billing/api/invoices/${encodeURIComponent(invoiceId)}`))
+  );
+
+  reg(
+    "ubcab_bo_service_trip_invoices",
+    "Аль ч үйлчилгээний аяллын нэхэмжлэх. GET /v1/{service}/api/trips/{tripId}/invoices. " +
+      "service: 'taxi' (taxi_trip), 'delivery' (delivery_trip) баталгаатай; бусад модулийн " +
+      "(call-driver, sos, logistic) замын нэр тодорхойгүй тул эхлээд туршиж үз. " +
+      "Хүргэлтийн ХҮСЭЛТ (request)-ийн нэхэмжлэхийг requestId өгч авна: " +
+      "GET /v1/delivery/api/requests/{requestId}/invoices.",
+    {
+      service: z
+        .string()
+        .min(1)
+        .describe("Service модуль замд: taxi | delivery | (бусад таамаг)."),
+      tripId: z.string().optional().describe("Аяллын id (relatedEntity._id)."),
+      requestId: z
+        .string()
+        .optional()
+        .describe("Зөвхөн delivery: хүсэлтийн id — өгвөл /requests/{id}/invoices дуудна."),
+    },
+    ({ service, tripId, requestId }) => {
+      const svc = encodeURIComponent(service.replace(/^\/+|\/+$/g, ""));
+      if (requestId) {
+        return guarded(() =>
+          client.request("GET", `/v1/${svc}/api/requests/${encodeURIComponent(requestId)}/invoices`)
+        );
+      }
+      if (!tripId) {
+        return Promise.resolve({
+          content: [{ type: "text" as const, text: "tripId эсвэл requestId-ийн аль нэгийг өг." }],
+          isError: true,
+        });
+      }
+      return guarded(() =>
+        client.request("GET", `/v1/${svc}/api/trips/${encodeURIComponent(tripId)}/invoices`)
+      );
+    }
+  );
+
   // --- charges (price breakdown) ---
   reg(
     "ubcab_bo_trip_charges",
