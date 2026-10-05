@@ -85,13 +85,27 @@ export function totpCode(
   return String(bin % 10 ** digits).padStart(digits, "0");
 }
 
-function totpFromEnv(secret: string | undefined): string | undefined {
+/**
+ * `stepOffset` shifts the time step: 0 = current code, +1 = the next 30 s code.
+ * Keycloak accepts ±1 step (look-around window) but rejects a code that was
+ * already used — which happens when several serverless instances (or the owner's
+ * own browser login) log in within the same 30 s step.
+ */
+function totpFromEnv(secret: string | undefined, stepOffset = 0): string | undefined {
   if (!secret) return undefined;
+  const period = Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30;
   return totpCode(secret, {
     digits: Number(process.env.UBCAB_BO_TOTP_DIGITS) || 6,
-    period: Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30,
+    period,
     algorithm: process.env.UBCAB_BO_TOTP_ALGORITHM || "SHA1",
+    now: Date.now() + stepOffset * period * 1000,
   });
+}
+
+function isInvalidGrant(err: unknown): boolean {
+  if (!(err instanceof BOError) || (err.status !== 400 && err.status !== 401)) return false;
+  const body = (err.body ?? {}) as Record<string, unknown>;
+  return body.error === "invalid_grant";
 }
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -206,8 +220,19 @@ class UBCabBOClient {
       // password grant fails with "Account is not fully set up" / "Invalid user
       // credentials". The code is generated here, never logged.
       const totp = totpFromEnv(this.cfg.totpSecret);
-      if (totp) params.totp = totp;
-      return this.tokenRequest(params);
+      if (!totp) return this.tokenRequest(params);
+      try {
+        return await this.tokenRequest({ ...params, totp });
+      } catch (err) {
+        // 2026-10-05: concurrent cold starts send the SAME code within one 30 s
+        // step; Keycloak accepts the first and answers the rest with
+        // invalid_grant «Invalid user credentials». Retry ONCE with the next
+        // step's code (inside Keycloak's ±1 look-around window). Only one extra
+        // attempt so a real credential problem cannot trip brute-force lockout.
+        if (!isInvalidGrant(err)) throw err;
+        const next = totpFromEnv(this.cfg.totpSecret, 1);
+        return this.tokenRequest({ ...params, totp: next as string });
+      }
     }
     throw new BOError(
       "No credentials. Set UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD, or UBCAB_BO_REFRESH_TOKEN."
