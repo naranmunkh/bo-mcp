@@ -30,10 +30,69 @@
  *   UBCAB_BO_API_URL                       API base (default https://registration-bo-api.ubcabtech.com)
  *   UBCAB_BO_ORIGIN                        Origin/Referer (default https://operator.ubcab.mn)
  *   UBCAB_BO_MCP_AUTH_TOKEN                required in HTTP mode (fails closed)
+ *   UBCAB_BO_TOTP_SECRET                   base32 TOTP secret of the BO account when Keycloak
+ *                                          enforces 2FA (2026-10-05). A fresh 6-digit code is
+ *                                          generated for every password grant and sent as `totp`.
+ *                                          Per-client overrides: UBCAB_EXPRESS_TOTP_SECRET,
+ *                                          UBCAB_MARKETING_TOTP_SECRET, UBEATS_TOTP_SECRET.
+ *   UBCAB_BO_TOTP_DIGITS / _PERIOD / _ALGORITHM  defaults 6 / 30 / SHA1 (Keycloak defaults)
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual, createHmac, createHash } from "node:crypto";
+
+// ===========================================================================
+// TOTP (RFC 6238) — Keycloak 2FA for the service account (2026-10-05)
+// ===========================================================================
+
+/** Decode an RFC 4648 base32 secret (spaces, dashes, padding and case ignored). */
+export function base32Decode(input: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = input.toUpperCase().replace(/[\s=-]/g, "");
+  if (!clean) throw new Error("Empty TOTP secret");
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+  for (const ch of clean) {
+    const idx = alphabet.indexOf(ch);
+    if (idx < 0) throw new Error("TOTP secret is not valid base32");
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Buffer.from(out);
+}
+
+/** RFC 6238 TOTP code. `secret` may be a base32 string or raw key bytes. */
+export function totpCode(
+  secret: string | Buffer,
+  opts: { now?: number; period?: number; digits?: number; algorithm?: string } = {},
+): string {
+  const key = typeof secret === "string" ? base32Decode(secret) : secret;
+  const period = opts.period ?? 30;
+  const digits = opts.digits ?? 6;
+  const algorithm = (opts.algorithm ?? "SHA1").toLowerCase().replace("-", "");
+  const counter = Math.floor((opts.now ?? Date.now()) / 1000 / period);
+  const msg = Buffer.alloc(8);
+  msg.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
+  msg.writeUInt32BE(counter >>> 0, 4);
+  const h = createHmac(algorithm, key).update(msg).digest();
+  const offset = h[h.length - 1] & 0x0f;
+  const bin = ((h[offset] & 0x7f) << 24) | (h[offset + 1] << 16) | (h[offset + 2] << 8) | h[offset + 3];
+  return String(bin % 10 ** digits).padStart(digits, "0");
+}
+
+function totpFromEnv(secret: string | undefined): string | undefined {
+  if (!secret) return undefined;
+  return totpCode(secret, {
+    digits: Number(process.env.UBCAB_BO_TOTP_DIGITS) || 6,
+    period: Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30,
+    algorithm: process.env.UBCAB_BO_TOTP_ALGORITHM || "SHA1",
+  });
+}
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -76,6 +135,8 @@ interface RequestOptions {
 interface AuthConfig {
   username: string;
   password: string;
+  /** base32 TOTP secret; when set, every password grant carries a fresh `totp` code. */
+  totpSecret?: string;
   refreshToken: string;
   clientId: string;
   ssoUrl: string;
@@ -134,13 +195,19 @@ class UBCabBOClient {
       }
     }
     if (hasPassword) {
-      return this.tokenRequest({
+      const params: Record<string, string> = {
         grant_type: "password",
         client_id: this.clientId,
         username: this.cfg.username,
         password: this.cfg.password,
         scope: "openid",
-      });
+      };
+      // 2026-10-05: Keycloak now enforces 2FA on the BO realm. Without a code the
+      // password grant fails with "Account is not fully set up" / "Invalid user
+      // credentials". The code is generated here, never logged.
+      const totp = totpFromEnv(this.cfg.totpSecret);
+      if (totp) params.totp = totp;
+      return this.tokenRequest(params);
     }
     throw new BOError(
       "No credentials. Set UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD, or UBCAB_BO_REFRESH_TOKEN."
@@ -239,6 +306,7 @@ function getClient(): UBCabBOClient {
     cachedClient = new UBCabBOClient({
       username: process.env.UBCAB_BO_USERNAME ?? "",
       password: process.env.UBCAB_BO_PASSWORD ?? "",
+      totpSecret: process.env.UBCAB_BO_TOTP_SECRET ?? "",
       refreshToken: process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
       clientId: process.env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
       ssoUrl: process.env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
@@ -262,6 +330,7 @@ function getExpressClient(): UBCabBOClient {
     cachedExpressClient = new UBCabBOClient({
       username: process.env.UBCAB_EXPRESS_USERNAME ?? "",
       password: process.env.UBCAB_EXPRESS_PASSWORD ?? "",
+      totpSecret: process.env.UBCAB_EXPRESS_TOTP_SECRET ?? "",
       refreshToken: process.env.UBCAB_EXPRESS_REFRESH_TOKEN ?? "",
       clientId: process.env.UBCAB_EXPRESS_CLIENT_ID ?? DEFAULT_EXPRESS_CLIENT_ID,
       ssoUrl: process.env.UBCAB_EXPRESS_SSO_URL ?? DEFAULT_SSO_URL,
@@ -284,6 +353,8 @@ function getMarketingClient(): UBCabBOClient {
     cachedMarketingClient = new UBCabBOClient({
       username: process.env.UBCAB_MARKETING_USERNAME ?? process.env.UBCAB_BO_USERNAME ?? "",
       password: process.env.UBCAB_MARKETING_PASSWORD ?? process.env.UBCAB_BO_PASSWORD ?? "",
+      // Same account as UBCAB_BO_* unless overridden → same TOTP secret.
+      totpSecret: process.env.UBCAB_MARKETING_TOTP_SECRET ?? (process.env.UBCAB_MARKETING_USERNAME ? "" : process.env.UBCAB_BO_TOTP_SECRET ?? ""),
       refreshToken:
         process.env.UBCAB_MARKETING_REFRESH_TOKEN ?? process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
       clientId:
@@ -309,6 +380,7 @@ function getUbeatsClient(): UBCabBOClient {
     cachedUbeatsClient = new UBCabBOClient({
       username: process.env.UBEATS_USERNAME ?? "",
       password: process.env.UBEATS_PASSWORD ?? "",
+      totpSecret: process.env.UBEATS_TOTP_SECRET ?? "",
       refreshToken: process.env.UBEATS_REFRESH_TOKEN ?? "",
       clientId: process.env.UBEATS_CLIENT_ID ?? DEFAULT_UBEATS_CLIENT_ID,
       ssoUrl: process.env.UBEATS_SSO_URL ?? DEFAULT_SSO_URL,

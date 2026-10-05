@@ -16,6 +16,24 @@ const ORIGIN = process.env.UBCAB_BO_ORIGIN || "https://operator.ubcab.mn";
 const TOKEN_URL = `${SSO_URL}/realms/${REALM}/protocol/openid-connect/token`;
 const query = process.argv[2] || "99054120";
 
+// Same RFC 6238 generator as api/index.ts (2026-10-05, Keycloak 2FA).
+async function totpNow(secret) {
+  const { createHmac } = await import("node:crypto");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0; const bytes = [];
+  for (const ch of secret.toUpperCase().replace(/[\s=-]/g, "")) {
+    const i = alphabet.indexOf(ch); if (i < 0) throw new Error("TOTP secret is not base32");
+    value = (value << 5) | i; bits += 5;
+    if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  const counter = Math.floor(Date.now() / 30000);
+  const msg = Buffer.alloc(8); msg.writeUInt32BE(Math.floor(counter / 0x100000000), 0); msg.writeUInt32BE(counter >>> 0, 4);
+  const h = createHmac("sha1", Buffer.from(bytes)).update(msg).digest();
+  const o = h[h.length - 1] & 0x0f;
+  const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(bin % 1e6).padStart(6, "0");
+}
+
 async function getToken() {
   let params;
   if (process.env.UBCAB_BO_REFRESH_TOKEN) {
@@ -32,6 +50,7 @@ async function getToken() {
       password: process.env.UBCAB_BO_PASSWORD,
       scope: "openid",
     };
+    if (process.env.UBCAB_BO_TOTP_SECRET) params.totp = await totpNow(process.env.UBCAB_BO_TOTP_SECRET);
   } else {
     throw new Error("Set UBCAB_BO_USERNAME+PASSWORD or UBCAB_BO_REFRESH_TOKEN");
   }

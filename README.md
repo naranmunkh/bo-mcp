@@ -18,6 +18,12 @@ The server gets an access token from
 
 - **password grant** — set `UBCAB_BO_USERNAME` + `UBCAB_BO_PASSWORD` (recommended; durable).
 - **refresh_token grant** — set `UBCAB_BO_REFRESH_TOKEN` (use if password grant is disabled; expires).
+- **2FA (since 2026-10-05)** — Keycloak enforces OTP on the BO realm. Set `UBCAB_BO_TOTP_SECRET` to the
+  account's base32 TOTP secret (the text shown under «Unable to scan?» when setting up the authenticator).
+  Every password grant then sends a freshly generated 6-digit `totp`. Without it Keycloak answers
+  `invalid_grant` («Account is not fully set up» until OTP is configured, then «Invalid user credentials»).
+  Per-client overrides: `UBCAB_EXPRESS_TOTP_SECRET`, `UBCAB_MARKETING_TOTP_SECRET`, `UBEATS_TOTP_SECRET`.
+  Verify the generator offline: `node scripts/test-totp.mjs`.
 
 Access tokens are short-lived (~5 min); the server caches and silently re-auths.
 Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
