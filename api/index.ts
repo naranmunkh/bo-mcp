@@ -224,14 +224,19 @@ class UBCabBOClient {
       try {
         return await this.tokenRequest({ ...params, totp });
       } catch (err) {
-        // 2026-10-05: concurrent cold starts send the SAME code within one 30 s
-        // step; Keycloak accepts the first and answers the rest with
-        // invalid_grant «Invalid user credentials». Retry ONCE with the next
-        // step's code (inside Keycloak's ±1 look-around window). Only one extra
-        // attempt so a real credential problem cannot trip brute-force lockout.
+        // A TOTP code is single-use in Keycloak. When another login (a second
+        // serverless instance, another app, or the owner's own browser login on the
+        // same account) spends the current step's code first, ours is answered with
+        // invalid_grant «Invalid user credentials». 2026-10-06: the realm does NOT
+        // accept the next step's code early (the +1 retry of 951495b failed in
+        // production), so wait for the next 30 s step to begin and log in with that
+        // fresh code. ONE retry only, so a genuinely wrong password/secret cannot trip
+        // Keycloak's brute-force lockout. Callers must allow ~35 s for a login.
         if (!isInvalidGrant(err)) throw err;
-        const next = totpFromEnv(this.cfg.totpSecret, 1);
-        return this.tokenRequest({ ...params, totp: next as string });
+        const period = (Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30) * 1000;
+        const waitMs = period - (Date.now() % period) + 1_000;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        return this.tokenRequest({ ...params, totp: totpFromEnv(this.cfg.totpSecret) as string });
       }
     }
     throw new BOError(
