@@ -34,7 +34,8 @@
  *                                          enforces 2FA (2026-10-05). A fresh 6-digit code is
  *                                          generated for every password grant and sent as `totp`.
  *                                          Per-client overrides: UBCAB_EXPRESS_TOTP_SECRET,
- *                                          UBCAB_MARKETING_TOTP_SECRET, UBEATS_TOTP_SECRET.
+ *                                          UBCAB_MARKETING_TOTP_SECRET. The ubeats_* tools use
+ *                                          the BO login too (UBEATS_* only when it is unset).
  *   UBCAB_BO_TOTP_DIGITS / _PERIOD / _ALGORITHM  defaults 6 / 30 / SHA1 (Keycloak defaults)
  */
 
@@ -400,17 +401,38 @@ function getMarketingClient(): UBCabBOClient {
 
 // UBEats backoffice API — again its own host. Same Keycloak realm (ubcab-bo);
 // client id / origin are overridable because they differ per BO app.
+// Origin: office.ubeats.mn is the UBEats BO web app (verified in ubeats-bo-mcp);
+// Keycloak answers 403 «Invalid origin» for anything not in the client's web origins.
 const DEFAULT_UBEATS_API_URL = "https://ubeats-bo-api.ubcabtech.com";
 const DEFAULT_UBEATS_CLIENT_ID = "ubeats-bo";
-const DEFAULT_UBEATS_ORIGIN = "https://ubeats-bo.ubcab.mn";
+const DEFAULT_UBEATS_ORIGIN = "https://office.ubeats.mn";
+
+// Logs in with the BO login (UBCAB_BO_USERNAME/PASSWORD + its TOTP secret): the
+// same account works for the ubeats-bo client. Username, password and TOTP secret
+// always come from one source; UBEATS_* creds are only used when no BO login is set.
+function ubeatsLoginFromEnv(): Pick<AuthConfig, "username" | "password" | "totpSecret"> {
+  const env = process.env;
+  if (env.UBCAB_BO_USERNAME && env.UBCAB_BO_PASSWORD) {
+    return {
+      username: env.UBCAB_BO_USERNAME,
+      password: env.UBCAB_BO_PASSWORD,
+      totpSecret: env.UBCAB_BO_TOTP_SECRET ?? "",
+    };
+  }
+  return {
+    username: env.UBEATS_USERNAME ?? "",
+    password: env.UBEATS_PASSWORD ?? "",
+    totpSecret: env.UBEATS_TOTP_SECRET ?? "",
+  };
+}
 
 let cachedUbeatsClient: UBCabBOClient | null = null;
 function getUbeatsClient(): UBCabBOClient {
   if (!cachedUbeatsClient) {
     cachedUbeatsClient = new UBCabBOClient({
-      username: process.env.UBEATS_USERNAME ?? "",
-      password: process.env.UBEATS_PASSWORD ?? "",
-      totpSecret: process.env.UBEATS_TOTP_SECRET ?? "",
+      ...ubeatsLoginFromEnv(),
+      // Not UBCAB_BO_REFRESH_TOKEN: a refresh token is bound to the client that
+      // issued it ("ubcab-registration-bo"), so it cannot be used for "ubeats-bo".
       refreshToken: process.env.UBEATS_REFRESH_TOKEN ?? "",
       clientId: process.env.UBEATS_CLIENT_ID ?? DEFAULT_UBEATS_CLIENT_ID,
       ssoUrl: process.env.UBEATS_SSO_URL ?? DEFAULT_SSO_URL,

@@ -22,7 +22,10 @@ The server gets an access token from
   account's base32 TOTP secret (the text shown under «Unable to scan?» when setting up the authenticator).
   Every password grant then sends a freshly generated 6-digit `totp`. Without it Keycloak answers
   `invalid_grant` («Account is not fully set up» until OTP is configured, then «Invalid user credentials»).
-  Per-client overrides: `UBCAB_EXPRESS_TOTP_SECRET`, `UBCAB_MARKETING_TOTP_SECRET`, `UBEATS_TOTP_SECRET`.
+  Per-client overrides: `UBCAB_EXPRESS_TOTP_SECRET`, `UBCAB_MARKETING_TOTP_SECRET`.
+- **UBEats (`ubeats_*` tools)** log in with the same BO login (`UBCAB_BO_USERNAME` / `_PASSWORD` /
+  `_TOTP_SECRET`) against client `ubeats-bo`, Origin `https://office.ubeats.mn`. `UBEATS_USERNAME` /
+  `_PASSWORD` / `_TOTP_SECRET` are only a fallback when no BO login is set.
   Verify the generator offline: `node scripts/test-totp.mjs`.
 
 Access tokens are short-lived (~5 min); the server caches and silently re-auths.
