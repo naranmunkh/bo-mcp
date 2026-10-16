@@ -140,6 +140,14 @@ class BOError extends Error {
   }
 }
 
+/**
+ * Auth-code revision, printed in every Keycloak auth error together with the
+ * (non-secret) login settings. One failing tool call then shows which build is
+ * live and what it sent — a stale deploy and a wrong env var look identical
+ * otherwise. Bump it with every auth change.
+ */
+const AUTH_BUILD = "2026-10-16 bo-login+totp";
+
 interface RequestOptions {
   query?: Record<string, unknown>;
   body?: unknown;
@@ -152,6 +160,8 @@ interface AuthConfig {
   password: string;
   /** base32 TOTP secret; when set, every password grant carries a fresh `totp` code. */
   totpSecret?: string;
+  /** Which env vars the login came from (e.g. "UBCAB_BO_*"), for error messages. Never a value. */
+  loginSource?: string;
   refreshToken: string;
   clientId: string;
   ssoUrl: string;
@@ -237,7 +247,7 @@ class UBCabBOClient {
         const period = (Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30) * 1000;
         const waitMs = period - (Date.now() % period) + 1_000;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
-        return this.tokenRequest({ ...params, totp: totpFromEnv(this.cfg.totpSecret) as string });
+        return this.tokenRequest({ ...params, totp: totpFromEnv(this.cfg.totpSecret) as string }, "retried with the next 30 s code");
       }
     }
     throw new BOError(
@@ -245,7 +255,17 @@ class UBCabBOClient {
     );
   }
 
-  private async tokenRequest(params: Record<string, string>): Promise<string> {
+  /** Non-secret description of a token request: build, client, origin, login source, OTP. */
+  private authContext(params: Record<string, string>, note?: string): string {
+    const parts = [`build ${AUTH_BUILD}`, `client=${this.clientId}`, `origin=${this.origin}`, `grant=${params.grant_type}`];
+    if (params.grant_type === "password") {
+      parts.push(`login=${this.cfg.loginSource ?? "custom"}`, `totp=${params.totp ? "sent" : "not configured"}`);
+    }
+    if (note) parts.push(note);
+    return parts.join(", ");
+  }
+
+  private async tokenRequest(params: Record<string, string>, note?: string): Promise<string> {
     const res = await fetch(this.tokenUrl, {
       method: "POST",
       headers: {
@@ -258,7 +278,11 @@ class UBCabBOClient {
     });
     const body = await safeJson(res);
     if (!res.ok) {
-      throw new BOError(`Keycloak auth failed (HTTP ${res.status})`, res.status, body);
+      throw new BOError(
+        `Keycloak auth failed (HTTP ${res.status}) [${this.authContext(params, note)}]`,
+        res.status,
+        body
+      );
     }
     const obj = (body ?? {}) as Record<string, any>;
     const token = obj.access_token;
@@ -337,6 +361,7 @@ function getClient(): UBCabBOClient {
     cachedClient = new UBCabBOClient({
       username: process.env.UBCAB_BO_USERNAME ?? "",
       password: process.env.UBCAB_BO_PASSWORD ?? "",
+      loginSource: "UBCAB_BO_*",
       totpSecret: process.env.UBCAB_BO_TOTP_SECRET ?? "",
       refreshToken: process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
       clientId: process.env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
@@ -360,6 +385,7 @@ function getExpressClient(): UBCabBOClient {
   if (!cachedExpressClient) {
     cachedExpressClient = new UBCabBOClient({
       username: process.env.UBCAB_EXPRESS_USERNAME ?? "",
+      loginSource: "UBCAB_EXPRESS_*",
       password: process.env.UBCAB_EXPRESS_PASSWORD ?? "",
       totpSecret: process.env.UBCAB_EXPRESS_TOTP_SECRET ?? "",
       refreshToken: process.env.UBCAB_EXPRESS_REFRESH_TOKEN ?? "",
@@ -383,6 +409,7 @@ function getMarketingClient(): UBCabBOClient {
   if (!cachedMarketingClient) {
     cachedMarketingClient = new UBCabBOClient({
       username: process.env.UBCAB_MARKETING_USERNAME ?? process.env.UBCAB_BO_USERNAME ?? "",
+      loginSource: process.env.UBCAB_MARKETING_USERNAME ? "UBCAB_MARKETING_*" : "UBCAB_BO_*",
       password: process.env.UBCAB_MARKETING_PASSWORD ?? process.env.UBCAB_BO_PASSWORD ?? "",
       // Same account as UBCAB_BO_* unless overridden → same TOTP secret.
       totpSecret: process.env.UBCAB_MARKETING_TOTP_SECRET ?? (process.env.UBCAB_MARKETING_USERNAME ? "" : process.env.UBCAB_BO_TOTP_SECRET ?? ""),
@@ -410,19 +437,21 @@ const DEFAULT_UBEATS_ORIGIN = "https://office.ubeats.mn";
 // Logs in with the BO login (UBCAB_BO_USERNAME/PASSWORD + its TOTP secret): the
 // same account works for the ubeats-bo client. Username, password and TOTP secret
 // always come from one source; UBEATS_* creds are only used when no BO login is set.
-function ubeatsLoginFromEnv(): Pick<AuthConfig, "username" | "password" | "totpSecret"> {
+function ubeatsLoginFromEnv(): Pick<AuthConfig, "username" | "password" | "totpSecret" | "loginSource"> {
   const env = process.env;
   if (env.UBCAB_BO_USERNAME && env.UBCAB_BO_PASSWORD) {
     return {
       username: env.UBCAB_BO_USERNAME,
       password: env.UBCAB_BO_PASSWORD,
       totpSecret: env.UBCAB_BO_TOTP_SECRET ?? "",
+      loginSource: "UBCAB_BO_*",
     };
   }
   return {
     username: env.UBEATS_USERNAME ?? "",
     password: env.UBEATS_PASSWORD ?? "",
     totpSecret: env.UBEATS_TOTP_SECRET ?? "",
+    loginSource: "UBEATS_* (fallback: UBCAB_BO_USERNAME/PASSWORD not set)",
   };
 }
 
