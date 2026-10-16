@@ -145,6 +145,15 @@ Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>` at
 `https://bo-mcp.vercel.app/mcp`. The endpoint **fails closed** if
 `UBCAB_BO_MCP_AUTH_TOKEN` is unset.
 
+### Is the latest build live?
+
+Every Keycloak auth error ends with a non-secret context, for example
+`[build 2026-10-16 bo-login+totp, client=ubeats-bo, origin=https://office.ubeats.mn, grant=password, login=UBCAB_BO_*, totp=sent]`.
+No `[build …]` at all → an old deploy is still serving: the top Production
+deployment in Vercel must be the latest `main` commit ("Redeploy" on an old
+deployment rebuilds that old source). `origin` / `client` show what was actually
+sent, so a stale `UBEATS_ORIGIN` override is visible there.
+
 ## Extending
 
 Add a new endpoint by registering another tool inside `createMcpServer()` in
