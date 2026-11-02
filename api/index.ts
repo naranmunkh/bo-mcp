@@ -12,102 +12,36 @@
  *
  * UBCab BO auth flow (Keycloak SSO, realm "ubcab-bo"):
  *   Token endpoint: {SSO_URL}/realms/{REALM}/protocol/openid-connect/token
- *   The BO web app (operator.ubcab.mn) uses the public client
- *   "ubcab-registration-bo". This server gets an access token two ways:
- *     1. password grant   -> UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD
- *     2. refresh_token     -> UBCAB_BO_REFRESH_TOKEN
+ *   2026-11-02: the BO moved human logins to Microsoft (Entra) SSO and disabled the
+ *   password grant on every client ("Client not allowed for direct access grants"),
+ *   so username/password + TOTP no longer works. This server gets an access token:
+ *     1. client_credentials -> UBCAB_BO_CLIENT_ID + UBCAB_BO_CLIENT_SECRET
+ *        (a confidential client with a service account, issued by the BO team)
+ *     2. refresh_token      -> UBCAB_BO_REFRESH_TOKEN (sent with the client secret
+ *        when one is set; falls back to 1 when the refresh token is rejected)
  *   Access tokens are short-lived (~5 min); we cache until ~30s before expiry
  *   and silently re-auth. If a refresh_token comes back, we keep using it.
  *   Every API call also sends Origin/Referer = operator.ubcab.mn to satisfy
- *   the BO's allowed-origins check.
+ *   the BO's allowed-origins check (for a service-account client, ask the BO team
+ *   to add that origin to the client's Web origins).
  *
  * Env:
- *   UBCAB_BO_USERNAME, UBCAB_BO_PASSWORD   password-grant creds (recommended)
- *   UBCAB_BO_REFRESH_TOKEN                 alternative to username/password
- *   UBCAB_BO_CLIENT_ID                     OIDC client (default ubcab-registration-bo)
+ *   UBCAB_BO_CLIENT_ID                     OIDC client (default ubcab-registration-bo, public;
+ *                                          set it to the service-account client)
+ *   UBCAB_BO_CLIENT_SECRET                 that client's secret → client_credentials grant
+ *   UBCAB_BO_REFRESH_TOKEN                 alternative / addition to the client secret
  *   UBCAB_BO_SSO_URL                       Keycloak base (default https://sso.ubcabtech.com)
  *   UBCAB_BO_REALM                         realm (default ubcab-bo)
  *   UBCAB_BO_API_URL                       API base (default https://registration-bo-api.ubcabtech.com)
  *   UBCAB_BO_ORIGIN                        Origin/Referer (default https://operator.ubcab.mn)
  *   UBCAB_BO_MCP_AUTH_TOKEN                required in HTTP mode (fails closed)
- *   UBCAB_BO_TOTP_SECRET                   base32 TOTP secret of the BO account when Keycloak
- *                                          enforces 2FA (2026-10-05). A fresh 6-digit code is
- *                                          generated for every password grant and sent as `totp`.
- *                                          Per-client overrides: UBCAB_EXPRESS_TOTP_SECRET,
- *                                          UBCAB_MARKETING_TOTP_SECRET. The ubeats_* tools use
- *                                          the BO login too (UBEATS_* only when it is unset).
- *   UBCAB_BO_TOTP_DIGITS / _PERIOD / _ALGORITHM  defaults 6 / 30 / SHA1 (Keycloak defaults)
+ *   Per-API overrides: UBCAB_EXPRESS_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (express has
+ *   its own client), UBCAB_MARKETING_CLIENT_ID/... and UBEATS_CLIENT_ID/... (marketing and
+ *   ubeats reuse the UBCAB_BO_* client unless their own client id is set).
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual, createHmac, createHash } from "node:crypto";
-
-// ===========================================================================
-// TOTP (RFC 6238) — Keycloak 2FA for the service account (2026-10-05)
-// ===========================================================================
-
-/** Decode an RFC 4648 base32 secret (spaces, dashes, padding and case ignored). */
-export function base32Decode(input: string): Buffer {
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const clean = input.toUpperCase().replace(/[\s=-]/g, "");
-  if (!clean) throw new Error("Empty TOTP secret");
-  let bits = 0;
-  let value = 0;
-  const out: number[] = [];
-  for (const ch of clean) {
-    const idx = alphabet.indexOf(ch);
-    if (idx < 0) throw new Error("TOTP secret is not valid base32");
-    value = (value << 5) | idx;
-    bits += 5;
-    if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff);
-      bits -= 8;
-    }
-  }
-  return Buffer.from(out);
-}
-
-/** RFC 6238 TOTP code. `secret` may be a base32 string or raw key bytes. */
-export function totpCode(
-  secret: string | Buffer,
-  opts: { now?: number; period?: number; digits?: number; algorithm?: string } = {},
-): string {
-  const key = typeof secret === "string" ? base32Decode(secret) : secret;
-  const period = opts.period ?? 30;
-  const digits = opts.digits ?? 6;
-  const algorithm = (opts.algorithm ?? "SHA1").toLowerCase().replace("-", "");
-  const counter = Math.floor((opts.now ?? Date.now()) / 1000 / period);
-  const msg = Buffer.alloc(8);
-  msg.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
-  msg.writeUInt32BE(counter >>> 0, 4);
-  const h = createHmac(algorithm, key).update(msg).digest();
-  const offset = h[h.length - 1] & 0x0f;
-  const bin = ((h[offset] & 0x7f) << 24) | (h[offset + 1] << 16) | (h[offset + 2] << 8) | h[offset + 3];
-  return String(bin % 10 ** digits).padStart(digits, "0");
-}
-
-/**
- * `stepOffset` shifts the time step: 0 = current code, +1 = the next 30 s code.
- * Keycloak accepts ±1 step (look-around window) but rejects a code that was
- * already used — which happens when several serverless instances (or the owner's
- * own browser login) log in within the same 30 s step.
- */
-function totpFromEnv(secret: string | undefined, stepOffset = 0): string | undefined {
-  if (!secret) return undefined;
-  const period = Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30;
-  return totpCode(secret, {
-    digits: Number(process.env.UBCAB_BO_TOTP_DIGITS) || 6,
-    period,
-    algorithm: process.env.UBCAB_BO_TOTP_ALGORITHM || "SHA1",
-    now: Date.now() + stepOffset * period * 1000,
-  });
-}
-
-function isInvalidGrant(err: unknown): boolean {
-  if (!(err instanceof BOError) || (err.status !== 400 && err.status !== 401)) return false;
-  const body = (err.body ?? {}) as Record<string, unknown>;
-  return body.error === "invalid_grant";
-}
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -146,7 +80,7 @@ class BOError extends Error {
  * live and what it sent — a stale deploy and a wrong env var look identical
  * otherwise. Bump it with every auth change.
  */
-const AUTH_BUILD = "2026-10-16 bo-login+totp";
+const AUTH_BUILD = "2026-11-02 client-credentials";
 
 interface RequestOptions {
   query?: Record<string, unknown>;
@@ -155,22 +89,20 @@ interface RequestOptions {
   lang?: string;
 }
 
-interface AuthConfig {
-  username: string;
-  password: string;
-  /** base32 TOTP secret; when set, every password grant carries a fresh `totp` code. */
-  totpSecret?: string;
-  /** Which env vars the login came from (e.g. "UBCAB_BO_*"), for error messages. Never a value. */
-  loginSource?: string;
-  refreshToken: string;
+export interface AuthConfig {
+  /** Env-var prefix of this API's credentials, for error messages (e.g. "UBCAB_BO"). */
+  envPrefix: string;
   clientId: string;
+  /** Confidential client secret; when set, the server logs in as the client's service account. */
+  clientSecret?: string;
+  refreshToken: string;
   ssoUrl: string;
   realm: string;
   apiUrl: string;
   origin: string;
 }
 
-class UBCabBOClient {
+export class UBCabBOClient {
   private readonly apiUrl: string;
   private readonly tokenUrl: string;
   private readonly origin: string;
@@ -205,67 +137,52 @@ class UBCabBOClient {
   }
 
   private async authenticate(): Promise<string> {
-    const hasPassword = !!(this.cfg.username && this.cfg.password);
-    // Prefer refresh_token (cheaper, avoids re-sending creds); fall back to password.
+    const secret = this.cfg.clientSecret || "";
+    // Prefer refresh_token (cheaper); fall back to the service account.
     if (this.refreshToken) {
       try {
         return await this.tokenRequest({
           grant_type: "refresh_token",
           refresh_token: this.refreshToken,
           client_id: this.clientId,
+          // A confidential client must authenticate on refresh too.
+          ...(secret ? { client_secret: secret } : {}),
         });
       } catch (err) {
-        if (!hasPassword) throw err; // nothing else to try
-        // refresh expired/rotated — fall through to password grant
+        if (!secret) throw err; // nothing else to try
+        // refresh expired/revoked — fall through to client_credentials
       }
     }
-    if (hasPassword) {
-      const params: Record<string, string> = {
-        grant_type: "password",
+    if (secret) {
+      // 2026-11-02: the BO disabled the password grant; a confidential client with a
+      // service account (roles granted by the BO team) is the machine login. No user,
+      // no TOTP, so concurrent serverless instances can each log in independently.
+      return this.tokenRequest({
+        grant_type: "client_credentials",
         client_id: this.clientId,
-        username: this.cfg.username,
-        password: this.cfg.password,
-        scope: "openid",
-      };
-      // 2026-10-05: Keycloak now enforces 2FA on the BO realm. Without a code the
-      // password grant fails with "Account is not fully set up" / "Invalid user
-      // credentials". The code is generated here, never logged.
-      const totp = totpFromEnv(this.cfg.totpSecret);
-      if (!totp) return this.tokenRequest(params);
-      try {
-        return await this.tokenRequest({ ...params, totp });
-      } catch (err) {
-        // A TOTP code is single-use in Keycloak. When another login (a second
-        // serverless instance, another app, or the owner's own browser login on the
-        // same account) spends the current step's code first, ours is answered with
-        // invalid_grant «Invalid user credentials». 2026-10-06: the realm does NOT
-        // accept the next step's code early (the +1 retry of 951495b failed in
-        // production), so wait for the next 30 s step to begin and log in with that
-        // fresh code. ONE retry only, so a genuinely wrong password/secret cannot trip
-        // Keycloak's brute-force lockout. Callers must allow ~35 s for a login.
-        if (!isInvalidGrant(err)) throw err;
-        const period = (Number(process.env.UBCAB_BO_TOTP_PERIOD) || 30) * 1000;
-        const waitMs = period - (Date.now() % period) + 1_000;
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        return this.tokenRequest({ ...params, totp: totpFromEnv(this.cfg.totpSecret) as string }, "retried with the next 30 s code");
-      }
+        client_secret: secret,
+      });
     }
+    const p = this.cfg.envPrefix;
     throw new BOError(
-      "No credentials. Set UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD, or UBCAB_BO_REFRESH_TOKEN."
+      `No credentials for ${this.clientId}. Set ${p}_CLIENT_ID + ${p}_CLIENT_SECRET ` +
+        `(service account, client_credentials) or ${p}_REFRESH_TOKEN. Username/password + TOTP ` +
+        "login stopped working on 2026-11-02, when the BO Keycloak disabled the password grant."
     );
   }
 
-  /** Non-secret description of a token request: build, client, origin, login source, OTP. */
-  private authContext(params: Record<string, string>, note?: string): string {
-    const parts = [`build ${AUTH_BUILD}`, `client=${this.clientId}`, `origin=${this.origin}`, `grant=${params.grant_type}`];
-    if (params.grant_type === "password") {
-      parts.push(`login=${this.cfg.loginSource ?? "custom"}`, `totp=${params.totp ? "sent" : "not configured"}`);
-    }
-    if (note) parts.push(note);
-    return parts.join(", ");
+  /** Non-secret description of a token request: build, client, origin, grant, credential env. */
+  private authContext(params: Record<string, string>): string {
+    return [
+      `build ${AUTH_BUILD}`,
+      `client=${this.clientId}`,
+      `origin=${this.origin}`,
+      `grant=${params.grant_type}`,
+      `creds=${this.cfg.envPrefix}_*`,
+    ].join(", ");
   }
 
-  private async tokenRequest(params: Record<string, string>, note?: string): Promise<string> {
+  private async tokenRequest(params: Record<string, string>): Promise<string> {
     const res = await fetch(this.tokenUrl, {
       method: "POST",
       headers: {
@@ -278,11 +195,12 @@ class UBCabBOClient {
     });
     const body = await safeJson(res);
     if (!res.ok) {
-      throw new BOError(
-        `Keycloak auth failed (HTTP ${res.status}) [${this.authContext(params, note)}]`,
-        res.status,
-        body
-      );
+      const message = `Keycloak auth failed (HTTP ${res.status}) [${this.authContext(params)}]`;
+      // Tool errors reach MCP callers as HTTP 200 results, so this line is the only
+      // trace of an auth failure in the Vercel logs. Never log `params` (secrets).
+      const e = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+      console.error(message, e.error ?? "", e.error_description ?? "");
+      throw new BOError(message, res.status, body);
     }
     const obj = (body ?? {}) as Record<string, any>;
     const token = obj.access_token;
@@ -355,121 +273,107 @@ async function safeJson(res: Response): Promise<unknown> {
 // MCP server + tools
 // ===========================================================================
 
+type Env = Record<string, string | undefined>;
+
+export function boAuthConfig(env: Env): AuthConfig {
+  return {
+    envPrefix: "UBCAB_BO",
+    clientId: env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
+    clientSecret: env.UBCAB_BO_CLIENT_SECRET ?? "",
+    refreshToken: env.UBCAB_BO_REFRESH_TOKEN ?? "",
+    ssoUrl: env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
+    realm: env.UBCAB_BO_REALM ?? DEFAULT_REALM,
+    apiUrl: env.UBCAB_BO_API_URL ?? DEFAULT_API_URL,
+    origin: env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
+  };
+}
+
 let cachedClient: UBCabBOClient | null = null;
 function getClient(): UBCabBOClient {
-  if (!cachedClient) {
-    cachedClient = new UBCabBOClient({
-      username: process.env.UBCAB_BO_USERNAME ?? "",
-      password: process.env.UBCAB_BO_PASSWORD ?? "",
-      loginSource: "UBCAB_BO_*",
-      totpSecret: process.env.UBCAB_BO_TOTP_SECRET ?? "",
-      refreshToken: process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
-      clientId: process.env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
-      ssoUrl: process.env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
-      realm: process.env.UBCAB_BO_REALM ?? DEFAULT_REALM,
-      apiUrl: process.env.UBCAB_BO_API_URL ?? DEFAULT_API_URL,
-      origin: process.env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
-    });
-  }
+  if (!cachedClient) cachedClient = new UBCabBOClient(boAuthConfig(process.env));
   return cachedClient;
 }
 
-// UBExpress operator API — SAME Keycloak realm (ubcab-bo) but client_id "express-bo",
-// different API host (operator-api.ubcabexpress.mn). Needs its own operator account.
+// UBExpress operator API — SAME Keycloak realm (ubcab-bo) but its own client (public
+// "express-bo" for humans), different API host (operator-api.ubcabexpress.mn). Needs its
+// own credentials: UBCAB_EXPRESS_CLIENT_ID + UBCAB_EXPRESS_CLIENT_SECRET.
 const DEFAULT_EXPRESS_API_URL = "https://operator-api.ubcabexpress.mn";
 const DEFAULT_EXPRESS_CLIENT_ID = "express-bo";
 const DEFAULT_EXPRESS_ORIGIN = "https://office.ubcabexpress.mn";
 
+export function expressAuthConfig(env: Env): AuthConfig {
+  return {
+    envPrefix: "UBCAB_EXPRESS",
+    clientId: env.UBCAB_EXPRESS_CLIENT_ID ?? DEFAULT_EXPRESS_CLIENT_ID,
+    clientSecret: env.UBCAB_EXPRESS_CLIENT_SECRET ?? "",
+    refreshToken: env.UBCAB_EXPRESS_REFRESH_TOKEN ?? "",
+    ssoUrl: env.UBCAB_EXPRESS_SSO_URL ?? DEFAULT_SSO_URL,
+    realm: env.UBCAB_EXPRESS_REALM ?? DEFAULT_REALM,
+    apiUrl: env.UBCAB_EXPRESS_API_URL ?? DEFAULT_EXPRESS_API_URL,
+    origin: env.UBCAB_EXPRESS_ORIGIN ?? DEFAULT_EXPRESS_ORIGIN,
+  };
+}
+
 let cachedExpressClient: UBCabBOClient | null = null;
 function getExpressClient(): UBCabBOClient {
-  if (!cachedExpressClient) {
-    cachedExpressClient = new UBCabBOClient({
-      username: process.env.UBCAB_EXPRESS_USERNAME ?? "",
-      loginSource: "UBCAB_EXPRESS_*",
-      password: process.env.UBCAB_EXPRESS_PASSWORD ?? "",
-      totpSecret: process.env.UBCAB_EXPRESS_TOTP_SECRET ?? "",
-      refreshToken: process.env.UBCAB_EXPRESS_REFRESH_TOKEN ?? "",
-      clientId: process.env.UBCAB_EXPRESS_CLIENT_ID ?? DEFAULT_EXPRESS_CLIENT_ID,
-      ssoUrl: process.env.UBCAB_EXPRESS_SSO_URL ?? DEFAULT_SSO_URL,
-      realm: process.env.UBCAB_EXPRESS_REALM ?? DEFAULT_REALM,
-      apiUrl: process.env.UBCAB_EXPRESS_API_URL ?? DEFAULT_EXPRESS_API_URL,
-      origin: process.env.UBCAB_EXPRESS_ORIGIN ?? DEFAULT_EXPRESS_ORIGIN,
-    });
-  }
+  if (!cachedExpressClient) cachedExpressClient = new UBCabBOClient(expressAuthConfig(process.env));
   return cachedExpressClient;
 }
 
 // Marketing backoffice API — own host, but the SAME Keycloak realm and (per the
-// BO token's audience list) the same login works. Falls back to UBCAB_BO_* creds
-// so no extra env is needed; override only if marketing needs its own account.
+// BO token's audience list) the same login works. Falls back to the UBCAB_BO_* client
+// so no extra env is needed; override only if marketing needs its own client.
 const DEFAULT_MARKETING_API_URL = "https://marketing-bo-api.ubcabtech.com";
+
+export function marketingAuthConfig(env: Env): AuthConfig {
+  // Same client as UBCAB_BO_* unless overridden → same secret / refresh token. Keycloak
+  // binds both to their client, so never send them with another client id.
+  const own = !!env.UBCAB_MARKETING_CLIENT_ID;
+  return {
+    envPrefix: own ? "UBCAB_MARKETING" : "UBCAB_BO",
+    clientId: env.UBCAB_MARKETING_CLIENT_ID ?? env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
+    clientSecret: env.UBCAB_MARKETING_CLIENT_SECRET ?? (own ? "" : env.UBCAB_BO_CLIENT_SECRET ?? ""),
+    refreshToken: env.UBCAB_MARKETING_REFRESH_TOKEN ?? (own ? "" : env.UBCAB_BO_REFRESH_TOKEN ?? ""),
+    ssoUrl: env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
+    realm: env.UBCAB_BO_REALM ?? DEFAULT_REALM,
+    apiUrl: env.UBCAB_MARKETING_API_URL ?? DEFAULT_MARKETING_API_URL,
+    origin: env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
+  };
+}
 
 let cachedMarketingClient: UBCabBOClient | null = null;
 function getMarketingClient(): UBCabBOClient {
-  if (!cachedMarketingClient) {
-    cachedMarketingClient = new UBCabBOClient({
-      username: process.env.UBCAB_MARKETING_USERNAME ?? process.env.UBCAB_BO_USERNAME ?? "",
-      loginSource: process.env.UBCAB_MARKETING_USERNAME ? "UBCAB_MARKETING_*" : "UBCAB_BO_*",
-      password: process.env.UBCAB_MARKETING_PASSWORD ?? process.env.UBCAB_BO_PASSWORD ?? "",
-      // Same account as UBCAB_BO_* unless overridden → same TOTP secret.
-      totpSecret: process.env.UBCAB_MARKETING_TOTP_SECRET ?? (process.env.UBCAB_MARKETING_USERNAME ? "" : process.env.UBCAB_BO_TOTP_SECRET ?? ""),
-      refreshToken:
-        process.env.UBCAB_MARKETING_REFRESH_TOKEN ?? process.env.UBCAB_BO_REFRESH_TOKEN ?? "",
-      clientId:
-        process.env.UBCAB_MARKETING_CLIENT_ID ?? process.env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
-      ssoUrl: process.env.UBCAB_BO_SSO_URL ?? DEFAULT_SSO_URL,
-      realm: process.env.UBCAB_BO_REALM ?? DEFAULT_REALM,
-      apiUrl: process.env.UBCAB_MARKETING_API_URL ?? DEFAULT_MARKETING_API_URL,
-      origin: process.env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
-    });
-  }
+  if (!cachedMarketingClient) cachedMarketingClient = new UBCabBOClient(marketingAuthConfig(process.env));
   return cachedMarketingClient;
 }
 
-// UBEats backoffice API — again its own host. Same Keycloak realm (ubcab-bo);
-// client id / origin are overridable because they differ per BO app.
+// UBEats backoffice API — again its own host. Same Keycloak realm (ubcab-bo).
 // Origin: office.ubeats.mn is the UBEats BO web app (verified in ubeats-bo-mcp);
 // Keycloak answers 403 «Invalid origin» for anything not in the client's web origins.
 const DEFAULT_UBEATS_API_URL = "https://ubeats-bo-api.ubcabtech.com";
-const DEFAULT_UBEATS_CLIENT_ID = "ubeats-bo";
 const DEFAULT_UBEATS_ORIGIN = "https://office.ubeats.mn";
 
-// Logs in with the BO login (UBCAB_BO_USERNAME/PASSWORD + its TOTP secret): the
-// same account works for the ubeats-bo client. Username, password and TOTP secret
-// always come from one source; UBEATS_* creds are only used when no BO login is set.
-function ubeatsLoginFromEnv(): Pick<AuthConfig, "username" | "password" | "totpSecret" | "loginSource"> {
-  const env = process.env;
-  if (env.UBCAB_BO_USERNAME && env.UBCAB_BO_PASSWORD) {
-    return {
-      username: env.UBCAB_BO_USERNAME,
-      password: env.UBCAB_BO_PASSWORD,
-      totpSecret: env.UBCAB_BO_TOTP_SECRET ?? "",
-      loginSource: "UBCAB_BO_*",
-    };
-  }
+export function ubeatsAuthConfig(env: Env): AuthConfig {
+  // Like marketing: the BO login works for UBEats (2026-10-16), so reuse the UBCAB_BO_*
+  // client — its roles and Web origins must then cover UBEats too. UBEATS_CLIENT_ID
+  // switches to a dedicated client; secret and refresh token always come from the same
+  // prefix as the client id (Keycloak binds them to their client).
+  const own = !!env.UBEATS_CLIENT_ID;
   return {
-    username: env.UBEATS_USERNAME ?? "",
-    password: env.UBEATS_PASSWORD ?? "",
-    totpSecret: env.UBEATS_TOTP_SECRET ?? "",
-    loginSource: "UBEATS_* (fallback: UBCAB_BO_USERNAME/PASSWORD not set)",
+    envPrefix: own ? "UBEATS" : "UBCAB_BO",
+    clientId: env.UBEATS_CLIENT_ID ?? env.UBCAB_BO_CLIENT_ID ?? DEFAULT_CLIENT_ID,
+    clientSecret: (own ? env.UBEATS_CLIENT_SECRET : env.UBCAB_BO_CLIENT_SECRET) ?? "",
+    refreshToken: (own ? env.UBEATS_REFRESH_TOKEN : env.UBCAB_BO_REFRESH_TOKEN) ?? "",
+    ssoUrl: env.UBEATS_SSO_URL ?? DEFAULT_SSO_URL,
+    realm: env.UBEATS_REALM ?? DEFAULT_REALM,
+    apiUrl: env.UBEATS_API_URL ?? DEFAULT_UBEATS_API_URL,
+    origin: env.UBEATS_ORIGIN ?? DEFAULT_UBEATS_ORIGIN,
   };
 }
 
 let cachedUbeatsClient: UBCabBOClient | null = null;
 function getUbeatsClient(): UBCabBOClient {
-  if (!cachedUbeatsClient) {
-    cachedUbeatsClient = new UBCabBOClient({
-      ...ubeatsLoginFromEnv(),
-      // Not UBCAB_BO_REFRESH_TOKEN: a refresh token is bound to the client that
-      // issued it ("ubcab-registration-bo"), so it cannot be used for "ubeats-bo".
-      refreshToken: process.env.UBEATS_REFRESH_TOKEN ?? "",
-      clientId: process.env.UBEATS_CLIENT_ID ?? DEFAULT_UBEATS_CLIENT_ID,
-      ssoUrl: process.env.UBEATS_SSO_URL ?? DEFAULT_SSO_URL,
-      realm: process.env.UBEATS_REALM ?? DEFAULT_REALM,
-      apiUrl: process.env.UBEATS_API_URL ?? DEFAULT_UBEATS_API_URL,
-      origin: process.env.UBEATS_ORIGIN ?? DEFAULT_UBEATS_ORIGIN,
-    });
-  }
+  if (!cachedUbeatsClient) cachedUbeatsClient = new UBCabBOClient(ubeatsAuthConfig(process.env));
   return cachedUbeatsClient;
 }
 

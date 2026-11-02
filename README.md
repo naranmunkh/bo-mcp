@@ -12,24 +12,35 @@ on Vercel** (bearer + OAuth 2.1 PKCE) or over **stdio** locally.
 
 ## Auth
 
-The BO uses **Keycloak SSO** (realm `ubcab-bo`, client `ubcab-registration-bo`).
-The server gets an access token from
+The BO uses **Keycloak SSO** (realm `ubcab-bo`). Since **2026-11-02** people log in
+with Microsoft SSO and the realm rejects the password grant on every client
+(`unauthorized_client` «Client not allowed for direct access grants»), so the old
+username/password + TOTP login is gone. The server gets an access token from
 `https://sso.ubcabtech.com/realms/ubcab-bo/protocol/openid-connect/token`:
 
-- **password grant** — set `UBCAB_BO_USERNAME` + `UBCAB_BO_PASSWORD` (recommended; durable).
-- **refresh_token grant** — set `UBCAB_BO_REFRESH_TOKEN` (use if password grant is disabled; expires).
-- **2FA (since 2026-10-05)** — Keycloak enforces OTP on the BO realm. Set `UBCAB_BO_TOTP_SECRET` to the
-  account's base32 TOTP secret (the text shown under «Unable to scan?» when setting up the authenticator).
-  Every password grant then sends a freshly generated 6-digit `totp`. Without it Keycloak answers
-  `invalid_grant` («Account is not fully set up» until OTP is configured, then «Invalid user credentials»).
-  Per-client overrides: `UBCAB_EXPRESS_TOTP_SECRET`, `UBCAB_MARKETING_TOTP_SECRET`.
-- **UBEats (`ubeats_*` tools)** log in with the same BO login (`UBCAB_BO_USERNAME` / `_PASSWORD` /
-  `_TOTP_SECRET`) against client `ubeats-bo`, Origin `https://office.ubeats.mn`. `UBEATS_USERNAME` /
-  `_PASSWORD` / `_TOTP_SECRET` are only a fallback when no BO login is set.
-  Verify the generator offline: `node scripts/test-totp.mjs`.
+- **client_credentials (service account)** — set `UBCAB_BO_CLIENT_ID` + `UBCAB_BO_CLIENT_SECRET`
+  of a *confidential* client with **Service accounts** enabled, created by the BO team with the
+  roles the tools need. Durable: no user, no 2FA, every serverless instance logs in on its own.
+- **refresh_token grant** — set `UBCAB_BO_REFRESH_TOKEN` (e.g. an offline token from a one-time
+  browser login). When a client secret is set too, it is sent with the refresh, and a rejected
+  refresh token falls back to client_credentials.
+
+Express reads its own client: `UBCAB_EXPRESS_CLIENT_ID` + `_CLIENT_SECRET` (operator-api; set the
+same values if the BO team issues one client for everything). Marketing (marketing-bo-api and the
+image upload) and UBEats (`ubeats_*` tools, ubeats-bo-api) reuse the `UBCAB_BO_*` client unless
+`UBCAB_MARKETING_CLIENT_ID` / `UBEATS_CLIENT_ID` (+ `_CLIENT_SECRET`) is set — the shared client
+then needs their roles and origins too. Each also accepts `*_REFRESH_TOKEN`. The public BO clients
+(`ubcab-registration-bo`, `express-bo`, `ubeats-bo`, `ubcab-marketing-bo`) cannot have service accounts.
 
 Access tokens are short-lived (~5 min); the server caches and silently re-auths.
-Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
+Every API call also sends `Origin`/`Referer` (`operator.ubcab.mn`, `office.ubcabexpress.mn`,
+`office.ubeats.mn`) — ask the BO team to put that origin in the service-account client's
+*Web origins* (Keycloak copies them into the token's `allowed-origins`; anything else gets
+403 «Invalid origin», verified for UBEats on 2026-10-16).
+
+A rejected token request is returned to the tool caller and logged as `Keycloak auth failed
+(HTTP <status>) [build …, client=…, origin=…, grant=…, creds=…]` (the log line adds Keycloak's
+error code) — the only trace in the Vercel logs, because tool errors return HTTP 200.
 
 ## Tools
 
@@ -107,9 +118,9 @@ Every API call also sends `Origin`/`Referer = operator.ubcab.mn`.
 
 ```bash
 npm install
-npm run compile
-cp .env.example .env   # fill UBCAB_BO_USERNAME + UBCAB_BO_PASSWORD
-node --env-file=.env scripts/test-login.mjs 99054120   # live smoke test
+npm test               # offline auth tests (compiles first; fetch is stubbed)
+cp .env.example .env   # fill UBCAB_BO_CLIENT_ID + UBCAB_BO_CLIENT_SECRET (+ the express pair)
+npm run test:login     # live: one read-only call per configured API, prints status/row counts only
 ```
 
 Claude Desktop config:
@@ -121,8 +132,8 @@ Claude Desktop config:
       "command": "node",
       "args": ["/abs/path/to/ubcab-bo-mcp/dist/api/index.js"],
       "env": {
-        "UBCAB_BO_USERNAME": "...",
-        "UBCAB_BO_PASSWORD": "..."
+        "UBCAB_BO_CLIENT_ID": "...",
+        "UBCAB_BO_CLIENT_SECRET": "..."
       }
     }
   }
@@ -131,15 +142,19 @@ Claude Desktop config:
 
 ## Deploy (Vercel)
 
-Connected to GitHub (`naranmunkh/bo-mcp`) — every push to `main` auto-deploys.
+Deploy with the Vercel CLI from this folder: `vercel --prod` (`.vercel/project.json`
+links it to `ubc-ab/bo-mcp`). Pushes to GitHub (`naranmunkh/bo-mcp`, a public repo)
+stopped auto-deploying after the project moved to the UBCab team.
 Zero-config: `api/index.ts` is auto-built as a serverless function, and
 `vercel.json` `rewrites` send every path (`/mcp`, `/health`, `/.well-known/*`) to
 it. There is intentionally **no `build` script** — a `build` script makes Vercel
 expect a static `public/` output and the deploy fails. Local TypeScript build is
 `npm run compile`.
 
-Required env vars on the Vercel project: `UBCAB_BO_USERNAME`, `UBCAB_BO_PASSWORD`,
-and `UBCAB_BO_MCP_AUTH_TOKEN` (`openssl rand -hex 32`).
+Required env vars on the Vercel project: `UBCAB_BO_CLIENT_ID`, `UBCAB_BO_CLIENT_SECRET`
+(Sensitive), and `UBCAB_BO_MCP_AUTH_TOKEN` (`openssl rand -hex 32`); for the express tools also
+`UBCAB_EXPRESS_CLIENT_ID` + `_CLIENT_SECRET` (marketing and UBEats use the BO client unless given their own).
+The retired `*_USERNAME`, `*_PASSWORD` and `*_TOTP_SECRET` vars are ignored — delete them.
 
 Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>` at
 `https://bo-mcp.vercel.app/mcp`. The endpoint **fails closed** if
@@ -148,11 +163,12 @@ Connect from Claude with `Authorization: Bearer <UBCAB_BO_MCP_AUTH_TOKEN>` at
 ### Is the latest build live?
 
 Every Keycloak auth error ends with a non-secret context, for example
-`[build 2026-10-16 bo-login+totp, client=ubeats-bo, origin=https://office.ubeats.mn, grant=password, login=UBCAB_BO_*, totp=sent]`.
-No `[build …]` at all → an old deploy is still serving: the top Production
-deployment in Vercel must be the latest `main` commit ("Redeploy" on an old
-deployment rebuilds that old source). `origin` / `client` show what was actually
-sent, so a stale `UBEATS_ORIGIN` override is visible there.
+`[build 2026-11-02 client-credentials, client=bo-mcp-registration, origin=https://operator.ubcab.mn, grant=client_credentials, creds=UBCAB_BO_*]`.
+No `[build …]`, or an older build (`2026-10-16 bo-login+totp`) → an old deploy is
+still serving: the top Production deployment in Vercel must be the latest code
+("Redeploy" on an old deployment rebuilds that old source). `client` / `origin` /
+`creds` show what was actually sent and which env vars it came from, so a stale
+override is visible there.
 
 ## Extending
 

@@ -8,7 +8,8 @@
     "start": "node dist/api/index.js",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test:login": "node scripts/test-login.mjs"
+    "test": "tsc && node --test test/*.test.mjs",
+    "test:login": "tsc && node --env-file-if-exists=.env scripts/test-login.mjs"
   },
   "engines": {
     "node": ">=18"
