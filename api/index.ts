@@ -34,6 +34,7 @@
  *   UBCAB_BO_REALM                         realm (default ubcab-bo)
  *   UBCAB_BO_API_URL                       API base (default https://registration-bo-api.ubcabtech.com)
  *   UBCAB_BO_ORIGIN                        Origin/Referer (default https://operator.ubcab.mn)
+ *   UBCAB_BO_USER_ORIGIN                   Origin/Referer for per-user-token calls (default https://operator.ubcab.mn)
  *   UBCAB_BO_MCP_AUTH_TOKEN                required in HTTP mode (fails closed)
  *   Per-API overrides: UBCAB_EXPRESS_CLIENT_ID/_CLIENT_SECRET/_REFRESH_TOKEN (express has
  *   its own client), UBCAB_MARKETING_CLIENT_ID/... and UBEATS_CLIENT_ID/... (marketing and
@@ -43,6 +44,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual, createHmac, createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -80,7 +82,55 @@ class BOError extends Error {
  * live and what it sent — a stale deploy and a wrong env var look identical
  * otherwise. Bump it with every auth change.
  */
-const AUTH_BUILD = "2026-11-02 client-credentials";
+const AUTH_BUILD = "2026-11-05 user-token";
+
+// ---------------------------------------------------------------------------
+// Per-user BO token (X-BO-User-Token)
+// ---------------------------------------------------------------------------
+// A caller that is already authenticated to this server may forward the signed-in
+// person's own BO access token. The registration and marketing clients then call BO
+// with that token (the person's own permissions, their name in BO's audit log).
+// The token lives only in AsyncLocalStorage for the duration of one HTTP request:
+// never cached on a client, never shared between concurrent requests.
+
+export const USER_TOKEN_HEADER = "x-bo-user-token";
+export const USER_TOKEN_REJECTED = "BO_USER_TOKEN_REJECTED";
+const USER_TOKEN_MAX_LENGTH = 8 * 1024;
+const DEFAULT_USER_ORIGIN = "https://operator.ubcab.mn";
+
+export type UserTokenContext =
+  | { kind: "token"; token: string }
+  | { kind: "invalid"; reason: string; raw: string };
+
+export const userTokenStore = new AsyncLocalStorage<UserTokenContext>();
+
+/** Parse the raw X-BO-User-Token header value; undefined = header absent (or blank). */
+export function parseUserTokenHeader(raw: string | string[] | undefined): UserTokenContext | undefined {
+  if (raw === undefined) return undefined;
+  if (Array.isArray(raw)) {
+    return { kind: "invalid", reason: "header sent more than once", raw: raw.join("") };
+  }
+  const value = raw.trim();
+  if (!value) return undefined;
+  if (value.length > USER_TOKEN_MAX_LENGTH) {
+    return { kind: "invalid", reason: "value longer than 8 KB", raw: value.slice(0, USER_TOKEN_MAX_LENGTH) };
+  }
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) {
+    return { kind: "invalid", reason: "not a JWT (three base64url segments expected)", raw: value };
+  }
+  return { kind: "token", token: value };
+}
+
+const JWT_LIKE = /eyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*){0,2}/g;
+
+/** Replace JWT-looking strings and the current request's exact header value with ***. */
+export function redactSecrets(text: string): string {
+  let out = text.replace(JWT_LIKE, "***");
+  const ctx = userTokenStore.getStore();
+  const exact = ctx ? (ctx.kind === "token" ? ctx.token : ctx.raw) : "";
+  if (exact) out = out.split(exact).join("***");
+  return out;
+}
 
 interface RequestOptions {
   query?: Record<string, unknown>;
@@ -93,6 +143,10 @@ export interface AuthConfig {
   /** Env-var prefix of this API's credentials, for error messages (e.g. "UBCAB_BO"). */
   envPrefix: string;
   clientId: string;
+  /** Registration/marketing clients: use the caller's X-BO-User-Token when the request carries one. */
+  allowUserToken?: boolean;
+  /** Origin/Referer sent with user-token requests (default https://operator.ubcab.mn). */
+  userOrigin?: string;
   /** Confidential client secret; when set, the server logs in as the client's service account. */
   clientSecret?: string;
   refreshToken: string;
@@ -171,6 +225,11 @@ export class UBCabBOClient {
     );
   }
 
+  /** The request-scoped user-token context, only for clients that accept one. */
+  private userContext(): UserTokenContext | undefined {
+    return this.cfg.allowUserToken ? userTokenStore.getStore() : undefined;
+  }
+
   /** Non-secret description of a token request: build, client, origin, grant, credential env. */
   private authContext(params: Record<string, string>): string {
     return [
@@ -179,6 +238,7 @@ export class UBCabBOClient {
       `origin=${this.origin}`,
       `grant=${params.grant_type}`,
       `creds=${this.cfg.envPrefix}_*`,
+      `user_token=${this.userContext()?.kind === "token" ? "yes" : "no"}`,
     ].join(", ");
   }
 
@@ -199,7 +259,7 @@ export class UBCabBOClient {
       // Tool errors reach MCP callers as HTTP 200 results, so this line is the only
       // trace of an auth failure in the Vercel logs. Never log `params` (secrets).
       const e = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-      console.error(message, e.error ?? "", e.error_description ?? "");
+      console.error(redactSecrets(message), redactSecrets(String(e.error ?? "")), redactSecrets(String(e.error_description ?? "")));
       throw new BOError(message, res.status, body);
     }
     const obj = (body ?? {}) as Record<string, any>;
@@ -226,13 +286,24 @@ export class UBCabBOClient {
       }
     }
 
+    const user = this.userContext();
+    if (user?.kind === "invalid") {
+      // Reject before any BO call: no fallback to server credentials.
+      throw new BOError(
+        `Invalid X-BO-User-Token header: ${user.reason}. No BO request was made. [${this.authContext({ grant_type: "user_token" })}]`
+      );
+    }
+    const origin = user
+      ? (this.cfg.userOrigin || DEFAULT_USER_ORIGIN).replace(/\/+$/, "")
+      : this.origin;
+
     const buildHeaders = (token: string): Record<string, string> => {
       const h: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         Accept: "application/json, text/plain, */*",
         "Accept-Language": opts.lang || "mn",
-        Origin: this.origin,
-        Referer: `${this.origin}/`,
+        Origin: origin,
+        Referer: `${origin}/`,
       };
       if (opts.body !== undefined) h["Content-Type"] = "application/json";
       return h;
@@ -244,6 +315,23 @@ export class UBCabBOClient {
         headers: buildHeaders(token),
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       });
+
+    if (user) {
+      // The person's own token: one attempt, no Keycloak call, no retry, no fallback.
+      const res = await doRequest(user.token);
+      const body = await safeJson(res);
+      if (res.status === 401 || res.status === 403) {
+        throw new BOError(
+          `${USER_TOKEN_REJECTED} (HTTP ${res.status}) on ${method} ${path} [${this.authContext({ grant_type: "user_token" })}]`,
+          res.status,
+          body
+        );
+      }
+      if (!res.ok) {
+        throw new BOError(`UBCab BO API error on ${method} ${path} (HTTP ${res.status})`, res.status, body);
+      }
+      return { status: res.status, ok: true, body };
+    }
 
     let token = await this.getToken();
     let res = await doRequest(token);
@@ -285,12 +373,13 @@ export function boAuthConfig(env: Env): AuthConfig {
     realm: env.UBCAB_BO_REALM ?? DEFAULT_REALM,
     apiUrl: env.UBCAB_BO_API_URL ?? DEFAULT_API_URL,
     origin: env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
+    userOrigin: env.UBCAB_BO_USER_ORIGIN || DEFAULT_USER_ORIGIN,
   };
 }
 
 let cachedClient: UBCabBOClient | null = null;
 function getClient(): UBCabBOClient {
-  if (!cachedClient) cachedClient = new UBCabBOClient(boAuthConfig(process.env));
+  if (!cachedClient) cachedClient = new UBCabBOClient({ ...boAuthConfig(process.env), allowUserToken: true });
   return cachedClient;
 }
 
@@ -338,12 +427,13 @@ export function marketingAuthConfig(env: Env): AuthConfig {
     realm: env.UBCAB_BO_REALM ?? DEFAULT_REALM,
     apiUrl: env.UBCAB_MARKETING_API_URL ?? DEFAULT_MARKETING_API_URL,
     origin: env.UBCAB_BO_ORIGIN ?? DEFAULT_ORIGIN,
+    userOrigin: env.UBCAB_BO_USER_ORIGIN || DEFAULT_USER_ORIGIN,
   };
 }
 
 let cachedMarketingClient: UBCabBOClient | null = null;
 function getMarketingClient(): UBCabBOClient {
-  if (!cachedMarketingClient) cachedMarketingClient = new UBCabBOClient(marketingAuthConfig(process.env));
+  if (!cachedMarketingClient) cachedMarketingClient = new UBCabBOClient({ ...marketingAuthConfig(process.env), allowUserToken: true });
   return cachedMarketingClient;
 }
 
@@ -402,10 +492,10 @@ async function guarded(fn: () => Promise<BOResult>): Promise<ToolResult> {
   } catch (err) {
     if (err instanceof BOError) {
       const detail = err.body != null ? `\n${JSON.stringify(err.body, null, 2)}` : "";
-      return { content: [{ type: "text", text: `${err.message}${detail}` }], isError: true };
+      return { content: [{ type: "text", text: redactSecrets(`${err.message}${detail}`) }], isError: true };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { content: [{ type: "text", text: message }], isError: true };
+    return { content: [{ type: "text", text: redactSecrets(message) }], isError: true };
   }
 }
 
@@ -2176,7 +2266,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
   if (body === undefined) body = await readBody(req);
 
-  try {
+  // Only reached for authenticated requests; the header is ignored otherwise.
+  const userCtx = parseUserTokenHeader(req.headers[USER_TOKEN_HEADER]);
+  const serve = async () => {
     const mcp = createMcpServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -2188,11 +2280,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     });
     await mcp.connect(transport);
     await transport.handleRequest(req, res, body);
+  };
+  try {
+    await (userCtx ? userTokenStore.run(userCtx, serve) : serve());
   } catch (err) {
     if (!res.headersSent) {
       sendJson(res, 500, {
         jsonrpc: "2.0",
-        error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+        error: { code: -32603, message: redactSecrets(err instanceof Error ? err.message : String(err)) },
         id: null,
       });
     }

@@ -219,7 +219,7 @@ test("auth error names build, client, origin, grant and credential env — never
   await assert.rejects(client.getToken(), (err) => {
     assert.match(
       err.message,
-      /\[build [^,\]]+, client=bo-mcp-test, origin=https:\/\/operator\.example\.test, grant=client_credentials, creds=UBCAB_BO_\*\]/
+      /\[build [^,\]]+, client=bo-mcp-test, origin=https:\/\/operator\.example\.test, grant=client_credentials, creds=UBCAB_BO_\*, user_token=no\]/
     );
     assert.doesNotMatch(err.message, /s3cret-value/);
     return true;
