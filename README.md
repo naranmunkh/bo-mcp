@@ -42,6 +42,28 @@ A rejected token request is returned to the tool caller and logged as `Keycloak 
 (HTTP <status>) [build …, client=…, origin=…, grant=…, creds=…]` (the log line adds Keycloak's
 error code) — the only trace in the Vercel logs, because tool errors return HTTP 200.
 
+## Per-user BO token (X-BO-User-Token)
+
+A caller that is already authenticated to this server (bearer token or the built-in OAuth) can
+forward the signed-in person's own BO access token in the request header
+`X-BO-User-Token: <access token (JWT)>`. Then:
+
+- The **registration** and **marketing** tools call BO with `Authorization: Bearer <that token>`,
+  so every action runs with the person's own permissions and shows their name in BO's audit log.
+  No Keycloak request is made, and the token is never cached or shared: it exists only for the
+  duration of that one HTTP request.
+- **Express** and **UBEats** tools ignore the header and keep their own credentials.
+- `Origin`/`Referer` for these calls come from `UBCAB_BO_USER_ORIGIN` (default
+  `https://operator.ubcab.mn`).
+- If BO answers 401 or 403, there is no retry and no fallback to the server credentials. The tool
+  error starts with `BO_USER_TOKEN_REJECTED (HTTP <status>)`; the caller should get a fresh token
+  and retry once.
+- A header that is longer than 8 KB or not three base64url segments gives a tool error and no BO
+  call. The header is ignored on requests that fail the server's own authentication.
+- Without the header nothing changes: the server's own credentials are used.
+- The token is never logged or echoed: JWT-looking strings and the exact header value are
+  replaced with `***` in errors and logs. Auth errors end with `user_token=yes|no`.
+
 ## Tools
 
 | Tool | Method / Endpoint | Purpose |
