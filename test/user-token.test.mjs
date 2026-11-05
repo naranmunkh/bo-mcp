@@ -93,7 +93,7 @@ test("header parsing: absent/blank ignored, whitespace stripped, size and shape 
   assert.equal(parseUserTokenHeader("   "), undefined);
   assert.deepEqual(parseUserTokenHeader(` ${USER_A}\t`), { kind: "token", token: USER_A });
   assert.equal(parseUserTokenHeader(["a.b.c", "a.b.c"]).kind, "invalid");
-  const atLimit = "A".repeat(8192 - 4) + ".b.c";
+  const atLimit = "A".repeat(16384 - 4) + ".b.c";
   assert.equal(parseUserTokenHeader(atLimit).kind, "token");
   assert.equal(parseUserTokenHeader(atLimit + "x").kind, "invalid");
 });
@@ -128,12 +128,16 @@ test("concurrent requests with different tokens never cross", async (t) => {
   assert.equal(byPath.fast, `Bearer ${USER_B}`);
 });
 
-for (const status of [401, 403]) {
-  test(`BO ${status} → BO_USER_TOKEN_REJECTED marker, one attempt, no Keycloak, no fallback`, async (t) => {
+for (const [status, marker, other] of [
+  [401, "BO_USER_TOKEN_REJECTED", "BO_USER_FORBIDDEN"],
+  [403, "BO_USER_FORBIDDEN", "BO_USER_TOKEN_REJECTED"],
+]) {
+  test(`BO ${status} → ${marker} marker, one attempt, no Keycloak, no fallback`, async (t) => {
     const calls = stubOutbound(t, async () => ({ status, body: { success: false, echo: USER_A } }));
     const r = await callTool(...REG, { "X-BO-User-Token": USER_A });
     assert.equal(r.isError, true);
-    assert.ok(r.text.startsWith(`BO_USER_TOKEN_REJECTED (HTTP ${status})`), r.text);
+    assert.ok(r.text.startsWith(`${marker} (HTTP ${status})`), r.text);
+    assert.ok(!r.text.includes(other));
     assert.match(r.text, /user_token=yes/);
     assert.ok(!r.text.includes(USER_A));
     assert.equal(calls.length, 1);
@@ -143,9 +147,10 @@ for (const status of [401, 403]) {
 
 test("malformed and oversized headers → tool error, no BO call", async (t) => {
   const calls = stubOutbound(t);
-  for (const bad of ["not-a-jwt", "a.b", "a.b.c.d", "a.b.c d", `${"A".repeat(9000)}.b.c`]) {
+  for (const bad of ["not-a-jwt", "a.b", "a.b.c.d", "a.b.c d"]) {
     const r = await callTool(...REG, { "X-BO-User-Token": bad });
     assert.equal(r.isError, true);
+    assert.ok(r.text.startsWith("BO_USER_TOKEN_INVALID"), r.text);
     assert.match(r.text, /Invalid X-BO-User-Token/);
     assert.ok(!r.text.includes(bad.slice(0, 50)) || bad.length < 20);
   }
@@ -188,4 +193,60 @@ test("header absent → server-credential path unchanged", async (t) => {
   const api = calls.find((c) => c.kind === "api");
   assert.equal(api.headers.Authorization, "Bearer server-at");
   assert.equal(api.headers.Origin, "https://operator.ubcab.mn");
+});
+
+const UPLOAD = ["ubcab_marketing_upload_image", { filename: "c.jpg", fileBase64: Buffer.from("img").toString("base64") }];
+
+test("image upload uses the user's token and user origin; no Keycloak call", async (t) => {
+  process.env.UBCAB_BO_USER_ORIGIN = "https://ops.example.test/";
+  t.after(() => delete process.env.UBCAB_BO_USER_ORIGIN);
+  const calls = stubOutbound(t, async () => ({ status: 200, body: { result: [{ fileUrl: "u" }] } }));
+  const r = await callTool(...UPLOAD, { "X-BO-User-Token": USER_A });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(calls.filter((c) => c.kind === "token").length, 0);
+  const api = calls.filter((c) => c.kind === "api");
+  assert.equal(api.length, 1);
+  assert.match(api[0].url, /\/v2\/upload/);
+  assert.equal(api[0].headers.Authorization, `Bearer ${USER_A}`);
+  assert.equal(api[0].headers.Origin, "https://ops.example.test");
+  assert.equal(api[0].headers.Referer, "https://ops.example.test/");
+});
+
+test("image upload with an invalid header fails with BO_USER_TOKEN_INVALID and makes no call", async (t) => {
+  const calls = stubOutbound(t);
+  const r = await callTool(...UPLOAD, { "X-BO-User-Token": "not-a-jwt" });
+  assert.equal(r.isError, true);
+  assert.ok(r.text.startsWith("BO_USER_TOKEN_INVALID"), r.text);
+  assert.equal(calls.length, 0);
+});
+
+for (const [status, marker] of [[401, "BO_USER_TOKEN_REJECTED"], [403, "BO_USER_FORBIDDEN"]]) {
+  test(`image upload ${status} with user token → ${marker}, redacted, no retry`, async (t) => {
+    const calls = stubOutbound(t, async () => ({ status, body: { echo: USER_A } }));
+    const r = await callTool(...UPLOAD, { "X-BO-User-Token": USER_A });
+    assert.equal(r.isError, true);
+    assert.ok(r.text.startsWith(`${marker} (HTTP ${status})`), r.text);
+    assert.ok(!r.text.includes(USER_A));
+    assert.equal(calls.length, 1);
+  });
+}
+
+test("image upload without header uses server credentials", async (t) => {
+  const calls = stubOutbound(t, async () => ({ status: 200, body: { result: [] } }));
+  const r = await callTool(...UPLOAD);
+  assert.equal(r.isError, false, r.text);
+  assert.equal(calls.filter((c) => c.kind === "token").length, 1);
+  assert.equal(calls.find((c) => c.kind === "api").headers.Authorization, "Bearer server-at");
+});
+
+test("user origin is read per request and shown in the auth-context suffix", async (t) => {
+  stubOutbound(t, async () => ({ status: 401, body: {} }));
+  t.after(() => delete process.env.UBCAB_BO_USER_ORIGIN);
+  process.env.UBCAB_BO_USER_ORIGIN = "https://one.example.test";
+  let r = await callTool(...REG, { "X-BO-User-Token": USER_A });
+  assert.match(r.text, /origin=https:\/\/one\.example\.test,/);
+  process.env.UBCAB_BO_USER_ORIGIN = "https://two.example.test";
+  r = await callTool(...REG, { "X-BO-User-Token": USER_A });
+  assert.match(r.text, /origin=https:\/\/two\.example\.test,/);
+  assert.ok(!r.text.includes("operator.ubcab.mn"));
 });

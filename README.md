@@ -54,12 +54,16 @@ forward the signed-in person's own BO access token in the request header
   duration of that one HTTP request.
 - **Express** and **UBEats** tools ignore the header and keep their own credentials.
 - `Origin`/`Referer` for these calls come from `UBCAB_BO_USER_ORIGIN` (default
-  `https://operator.ubcab.mn`).
-- If BO answers 401 or 403, there is no retry and no fallback to the server credentials. The tool
-  error starts with `BO_USER_TOKEN_REJECTED (HTTP <status>)`; the caller should get a fresh token
-  and retry once.
-- A header that is longer than 8 KB or not three base64url segments gives a tool error and no BO
-  call. The header is ignored on requests that fail the server's own authentication.
+  `https://operator.ubcab.mn`), read on every request; the auth-context suffix shows the same origin.
+- `ubcab_marketing_upload_image` uses the same token and origin (it never falls back to the server
+  credentials when the header is present).
+- If BO answers **401**, there is no retry and no fallback to the server credentials; the tool error
+  starts with `BO_USER_TOKEN_REJECTED (HTTP 401)` (login expired: the caller should get a fresh token
+  and retry once). If BO answers **403**, the error starts with `BO_USER_FORBIDDEN (HTTP 403)`: the
+  person is signed in but lacks permission, so a fresh token will not help; no retry, no fallback.
+- A header that is longer than 16 KB or not three base64url segments gives a tool error starting with
+  `BO_USER_TOKEN_INVALID` and no BO call. The header is ignored on requests that fail the server's own
+  authentication.
 - Without the header nothing changes: the server's own credentials are used.
 - The token is never logged or echoed: JWT-looking strings and the exact header value are
   replaced with `***` in errors and logs. Auth errors end with `user_token=yes|no`.
